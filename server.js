@@ -7,7 +7,7 @@ const app = express();
 app.use(express.json());
 
 const DATA_FILE = path.join(__dirname, "data.json");
-const MAX_ADMINS = 5; // erweiterbar, Standard erlaubt locker 2-3 Admins
+const MAX_ADMINS = 5;
 
 function uid() {
   return crypto.randomBytes(6).toString("hex");
@@ -40,7 +40,6 @@ function persist() {
   saveData(data);
 }
 
-// --- auth helpers ---
 function getToken(req) {
   const header = req.headers.authorization || "";
   const match = header.match(/^Bearer (.+)$/);
@@ -66,7 +65,6 @@ function publicAdmin(a) {
   return { id: a.id, name: a.name };
 }
 
-// --- state ---
 app.get("/api/state", (req, res) => {
   const token = getToken(req);
   const admin = findAdminByToken(token);
@@ -81,11 +79,10 @@ app.get("/api/state", (req, res) => {
   });
 });
 
-// --- admin setup / login / management ---
 app.post("/api/admin/setup", (req, res) => {
   const { name, pin } = req.body || {};
   if (data.admins.length > 0) {
-    return res.status(400).json({ error: "Es gibt bereits Admins. Bitte einloggen oder von einem bestehenden Admin hinzufuegen lassen." });
+    return res.status(400).json({ error: "Es gibt bereits Admins." });
   }
   if (!name || !pin || pin.length < 4) {
     return res.status(400).json({ error: "Name und PIN (mind. 4 Zeichen) erforderlich." });
@@ -118,7 +115,7 @@ app.post("/api/admin/add", requireAdmin, (req, res) => {
     return res.status(400).json({ error: "Name und PIN (mind. 4 Zeichen) erforderlich." });
   }
   if (data.admins.length >= MAX_ADMINS) {
-    return res.status(400).json({ error: `Maximal ${MAX_ADMINS} Admins moeglich.` });
+    return res.status(400).json({ error: "Maximal " + MAX_ADMINS + " Admins moeglich." });
   }
   if (data.admins.some((a) => a.name.toLowerCase() === name.trim().toLowerCase())) {
     return res.status(400).json({ error: "Dieser Admin-Name existiert bereits." });
@@ -139,7 +136,6 @@ app.delete("/api/admin/:id", requireAdmin, (req, res) => {
   res.json({ admins: data.admins.map(publicAdmin) });
 });
 
-// --- employees ---
 app.post("/api/employees", (req, res) => {
   const { name } = req.body || {};
   if (!name || !name.trim()) return res.status(400).json({ error: "Name erforderlich." });
@@ -159,7 +155,6 @@ app.delete("/api/employees/:id", requireAdmin, (req, res) => {
   res.json({ ok: true });
 });
 
-// --- time entries ---
 app.post("/api/time/clockin", (req, res) => {
   const { employeeId } = req.body || {};
   if (!employeeId) return res.status(400).json({ error: "employeeId erforderlich." });
@@ -186,7 +181,6 @@ app.delete("/api/time/:id", requireAdmin, (req, res) => {
   res.json({ ok: true });
 });
 
-// --- todos ---
 app.post("/api/todos", (req, res) => {
   const { employeeId, text, due } = req.body || {};
   if (!employeeId || !text || !text.trim()) return res.status(400).json({ error: "employeeId und text erforderlich." });
@@ -210,7 +204,6 @@ app.delete("/api/todos/:id", requireAdmin, (req, res) => {
   res.json({ ok: true });
 });
 
-// --- workflow tasks ---
 app.post("/api/tasks", (req, res) => {
   const { title, employeeId } = req.body || {};
   if (!title || !title.trim()) return res.status(400).json({ error: "title erforderlich." });
@@ -235,7 +228,6 @@ app.delete("/api/tasks/:id", requireAdmin, (req, res) => {
   res.json({ ok: true });
 });
 
-// --- static frontend ---
 app.use(express.static(path.join(__dirname, "public")));
 app.get("*", (req, res) => {
   if (req.path.startsWith("/api/")) return res.status(404).json({ error: "Not found" });
@@ -243,4 +235,4 @@ app.get("*", (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Team-App
+app.listen(PORT, () => console.log("Team-App laeuft auf Port " + PORT));
