@@ -641,11 +641,17 @@ ReactDOM.createRoot(document.getElementById("root")).render(<App />);
 </script>
 
 <script>
-  if ("serviceWorker" in navigator) {
-    window.addEventListener("load", () => {
-      navigator.serviceWorker.registenavigator.serviceWorker.register("service-worker.js").then((reg)r("service-worker.js").catch(() => {});
-    });
-  }
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("service-worker.js")
+      .then((reg) => {
+        console.log("SW registriert:", reg);
+      })
+      .catch((err) => {
+        console.error("SW Registrierung fehlgeschlagen:", err);
+      });
+  });
+}
 </script>
 <script>
   window.addEventListener("load", () => {
