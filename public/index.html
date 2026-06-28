@@ -640,19 +640,19 @@ function WorkflowTab({ employees, tasks, addTask, moveTask, deleteTask, isAdmin 
 ReactDOM.createRoot(document.getElementById("root")).render(<App />);
 </script>
 
-<script>
-if ("serviceWorker" in navigator) {
-  window.addEventListener("load", () => {
-    navigator.serviceWorker.register("service-worker.js")
-      .then((reg) => {
-        console.log("SW registriert:", reg);
-      })
-      .catch((err) => {
-        console.error("SW Registrierung fehlgeschlagen:", err);
-      });
-  });
-}
-</script>
+ <script>
+  if ("serviceWorker" in navigator) {
+    window.addEventListener("load", () => {
+      navigator.serviceWorker.register("serv...")  // hier Pfad prüfen
+        .then((reg) => {
+          console.log("SW registriert:", reg);
+        })
+        .catch((err) => {
+          console.error("SW Registrierung fe...");
+        });
+    });
+  }
+</script> 
 <script>
   window.addEventListener("load", () => {
     setTimeout(() => {
