@@ -1,6 +1,6 @@
 {
   "name": "obertauern-sport-team-app",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "Backend + Frontend fuer die Obertauern Sport Team-App",
   "main": "server.js",
   "scripts": {
@@ -10,6 +10,7 @@
     "node": ">=18"
   },
   "dependencies": {
-    "express": "^4.19.2"
+    "express": "^4.19.2",
+    "pg": "^8.12.0"
   }
 }
