@@ -135,6 +135,14 @@ const store = {
   set: (k, v) => { try { v === null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch (e) {} },
 };
 
+// ---------- Personen (Mitarbeiter + Admins für Admin-Zeiterfassung) ----------
+function adminPersons(S) { return (S.admins || []).map((a) => ({ ...a, active: true, isAdminPerson: true })); }
+function personName(S, id) {
+  const p = (S.employees || []).find((e) => e.id === id) || (S.admins || []).find((a) => a.id === id);
+  if (p) return p.name + (String(id).startsWith("admin:") ? " (Admin)" : "");
+  return String(id).startsWith("admin:") ? "Admin (gelöscht)" : "?";
+}
+
 // ---------- UI-Bausteine ----------
 const inputStyle = { background: COLORS.bg, border: `1px solid ${COLORS.panelBorder}`, color: COLORS.text };
 
@@ -606,12 +614,23 @@ function ZeitTab({ S, me, isAdmin, empAct, activeEmployees }) {
 
       {staleOpen.length > 0 && (
         <div className="mb-4 px-3 py-2 rounded-lg text-xs" style={{ background: COLORS.warn + "22", border: `1px solid ${COLORS.warn}`, color: COLORS.warn }}>
-          ⚠ Nicht ausgestempelt seit Vortag: {staleOpen.map((e) => (S.employees.find((x) => x.id === e.employeeId) || {}).name).join(", ")}.
+          ⚠ Nicht ausgestempelt seit Vortag: {staleOpen.map((e) => personName(S, e.employeeId)).join(", ")}.
           {isAdmin ? " Unter 📊 Auswertung → Einträge korrigieren." : " Bitte Admin informieren."}
         </div>
       )}
 
       {sorted.length === 0 && <Empty>{isAdmin ? "Noch keine Mitarbeiter angelegt." : "Dein Konto ist nicht aktiv."}</Empty>}
+
+      {isAdmin && view === "tag" && S.myAuthorId && (
+        <div className="mb-4">
+          <h3 className="text-xs uppercase tracking-wider mb-2 flex items-center gap-2" style={{ color: COLORS.accent }}>🔒 Meine Admin-Zeit <span className="normal-case tracking-normal" style={{ color: COLORS.textDim }}>· nur für Admins sichtbar</span></h3>
+          <div className="grid sm:grid-cols-2 gap-3">
+            <ClockCard emp={{ id: S.myAuthorId, name: S.adminName }} S={S} isMe empAct={empAct} today={today} />
+            <MyMonthPanel S={S} me={S.myAuthorId} />
+          </div>
+          {sorted.length > 0 && <h3 className="text-xs uppercase tracking-wider mt-5" style={{ color: COLORS.textDim }}>Mitarbeiter</h3>}
+        </div>
+      )}
 
       {view === "tag" ? (
         <div className="grid sm:grid-cols-2 gap-3">
@@ -1234,7 +1253,11 @@ function monthStats(S, emp, ym) {
 
 function MonthView({ S }) {
   const [ym, setYm] = useState(todayISO().slice(0, 7));
-  const emps = S.employees.filter((e) => e.active || S.timeEntries.some((t) => t.employeeId === e.id && t.date.startsWith(ym)));
+  const hasEntries = (id) => S.timeEntries.some((t) => t.employeeId === id && t.date.startsWith(ym));
+  const emps = [
+    ...S.employees.filter((e) => e.active || hasEntries(e.id)),
+    ...adminPersons(S).filter((a) => hasEntries(a.id)).map((a) => ({ ...a, name: a.name + " (Admin)" })),
+  ];
   const rows = emps.map((e) => ({ e, ...monthStats(S, e, ym) }));
   const total = rows.reduce((s, r) => s + r.net, 0);
 
@@ -1246,7 +1269,7 @@ function MonthView({ S }) {
   function exportDetail() {
     const out = [["Mitarbeiter", "Datum", "Wochentag", "Beginn", "Ende", "Pause (Min)", "Netto (Std)", "Standort", "Notiz", "Korrigiert von"]];
     S.timeEntries.filter((e) => e.date.startsWith(ym)).sort((a, b) => a.date.localeCompare(b.date) || a.start - b.start).forEach((e) => {
-      const emp = S.employees.find((x) => x.id === e.employeeId);
+      const emp = { name: personName(S, e.employeeId) };
       out.push([emp ? emp.name : "?", parseISO(e.date).toLocaleDateString("de-AT"), fmtDateShort(e.date).split(",")[0], fmtClock(e.start), e.end ? fmtClock(e.end) : "läuft", Math.round(entryBreakMs(e) / 60000), fmtHours(entryNetMs(e)), e.location || "", e.note || "", e.editedBy || ""]);
     });
     downloadCSV(`stunden_${ym}_details.csv`, out);
@@ -1316,13 +1339,13 @@ function EntriesView({ S, act }) {
           <p className="text-sm mb-2" style={{ color: COLORS.warn }}>⚠ Vergessen auszustempeln:</p>
           {openOld.map((e) => (
             <button key={e.id} onClick={() => setEdit({ entry: e })} className="block text-xs underline mb-1" style={{ color: COLORS.text }}>
-              {(S.employees.find((x) => x.id === e.employeeId) || {}).name} – {fmtDateShort(e.date)} ab {fmtClock(e.start)} → korrigieren
+              {personName(S, e.employeeId)} – {fmtDateShort(e.date)} ab {fmtClock(e.start)} → korrigieren
             </button>
           ))}
         </Panel>
       )}
       <div className="flex gap-2 mb-4 flex-wrap">
-        <div className="w-44"><Select value={empId} onChange={setEmpId}>{S.employees.map((e) => <option key={e.id} value={e.id}>{e.name}{e.active ? "" : " (inaktiv)"}</option>)}</Select></div>
+        <div className="w-44"><Select value={empId} onChange={setEmpId}>{S.employees.map((e) => <option key={e.id} value={e.id}>{e.name}{e.active ? "" : " (inaktiv)"}</option>)}{adminPersons(S).length > 0 && <optgroup label="Admins (versteckt)">{adminPersons(S).map((a) => <option key={a.id} value={a.id}>🔒 {a.name}</option>)}</optgroup>}</Select></div>
         <div className="w-44"><TextInput type="month" value={ym} onChange={(e) => e.target.value && setYm(e.target.value)} /></div>
         <Btn onClick={() => setEdit({ employeeId: empId })} disabled={!empId}>+ Eintrag nachtragen</Btn>
       </div>
@@ -1357,7 +1380,7 @@ function EntryModal({ S, act, init, onClose }) {
   });
   const [err, setErr] = useState("");
   const set = (k) => (v) => setF((p) => ({ ...p, [k]: v && v.target ? v.target.value : v }));
-  const empName = (S.employees.find((x) => x.id === (e ? e.employeeId : init.employeeId)) || {}).name;
+  const empName = personName(S, e ? e.employeeId : init.employeeId);
 
   async function save() {
     setErr("");
