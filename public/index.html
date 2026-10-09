@@ -438,16 +438,19 @@ function LoginScreen({ S, offline, onDone, openAdmin }) {
         <Panel>
           {list.length === 0 ? (
             <p className="text-sm mb-3" style={{ color: COLORS.textDim }}>
-              {S.adminCount === 0 ? "Willkommen! Richte zuerst einen Admin ein und lege danach die Mitarbeiter an." : "Noch keine Mitarbeiter mit PIN angelegt. Ein Admin muss dich zuerst anlegen."}
+              {S.adminCount === 0 ? "Willkommen! Richte zuerst einen Admin ein und lege danach die Mitarbeiter an." : "Noch keine Mitarbeiter angelegt. Ein Admin muss dich zuerst anlegen."}
             </p>
           ) : (
             <>
               <Field label="Name">
                 <Select value={empId} onChange={(v) => { setEmpId(v); setErr(""); }}>
                   <option value="">Bitte auswählen…</option>
-                  {list.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
+                  {list.map((e) => <option key={e.id} value={e.id}>{e.name}{e.hasPin === false ? " (noch keine PIN)" : ""}</option>)}
                 </Select>
               </Field>
+              {(list.find((e) => e.id === empId) || {}).hasPin === false && (
+                <p className="text-xs mb-3" style={{ color: COLORS.warn }}>Für dich ist noch keine PIN vergeben. Bitte frag einen Admin – er trägt sie unter Auswertung → Team ein.</p>
+              )}
               <Field label="PIN">
                 <TextInput type="password" inputMode="numeric" autoComplete="current-password" value={pin} onChange={(e) => setPin(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submit()} />
               </Field>
