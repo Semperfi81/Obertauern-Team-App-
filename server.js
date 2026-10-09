@@ -10,7 +10,12 @@ app.use(express.json({ limit: "1mb" }));
 
 const MAX_ADMINS = 5;
 const TZ = "Europe/Vienna";
-const LOCATIONS = ["E-Bike Verleih", "Trial / Funpark", "Footgolf", "Alpine Mini Market", "Allgemein"];
+// Standorte (Zeiterfassung, Schichten, Aufgaben) und Bereiche (Checklisten) –
+// Startwerte, danach vom Admin in der App unter Auswertung → Einstellungen änderbar
+const DEFAULT_LOCATIONS = ["Haupt", "Grünwaldkopf"];
+const DEFAULT_AREAS = ["Skiverleih", "Alpine Mini Market", "Allgemein"];
+const LOCS = () => data.settings.locations;
+const AREAS = () => data.settings.areas;
 
 // ---------------------------------------------------------------------------
 // Speicherung
@@ -27,6 +32,7 @@ function emptyData() {
   return {
     admins: [], employees: [], timeEntries: [], todos: [], tasks: [],
     shifts: [], checklistTemplates: [], checklistRuns: [], sessions: [], messages: [], pushSubs: [],
+    settings: { locations: DEFAULT_LOCATIONS.slice(), areas: DEFAULT_AREAS.slice() },
   };
 }
 
@@ -43,6 +49,21 @@ function normalize(d) {
     if (e.location === undefined) e.location = null;
     if (e.note === undefined) e.note = "";
     if (e.manualBreakMin === undefined) e.manualBreakMin = null;
+  });
+  if (!d.settings || typeof d.settings !== "object") d.settings = {};
+  if (!Array.isArray(d.settings.locations) || !d.settings.locations.length) d.settings.locations = DEFAULT_LOCATIONS.slice();
+  if (!Array.isArray(d.settings.areas) || !d.settings.areas.length) d.settings.areas = DEFAULT_AREAS.slice();
+  // Einmalig: alte Sommer-Beispiellisten (E-Bike, Funpark, Footgolf) entfernen
+  if (!d.settings.winter2026) {
+    const old = ["E-Bike Verleih öffnen", "E-Bike Verleih schließen", "Funpark Kontrolle", "Footgolf Platzrunde"];
+    const drop = new Set(d.checklistTemplates.filter((t) => old.includes(t.name)).map((t) => t.id));
+    d.checklistTemplates = d.checklistTemplates.filter((t) => !drop.has(t.id));
+    d.checklistRuns = d.checklistRuns.filter((r) => !drop.has(r.templateId));
+    d.settings.winter2026 = true;
+  }
+  d.checklistTemplates.forEach((t) => {
+    if (!t.area) t.area = t.location || "Allgemein";
+    if (["E-Bike Verleih", "Trial / Funpark", "Footgolf"].includes(t.area)) t.area = "Allgemein";
   });
   d.tasks.forEach((t) => {
     if (t.description === undefined) t.description = "";
@@ -200,12 +221,13 @@ function runningEntry(employeeId) {
 // ---------------------------------------------------------------------------
 app.get("/api/state", (req, res) => {
   const { admin, employee } = getAuth(req);
-  const base = { locations: LOCATIONS, today: localDate(), adminCount: data.admins.length };
+  const base = { locations: LOCS(), areas: AREAS(), today: localDate(), adminCount: data.admins.length };
   if (!admin && !employee) {
     // Nicht angemeldet: nur Namen für die Login-Auswahl
     return res.json({
       ...base, role: null,
-      loginEmployees: data.employees.filter((e) => e.active !== false && e.pinHash).map((e) => ({ id: e.id, name: e.name })),
+      loginEmployees: data.employees.filter((e) => e.active !== false).map((e) => ({ id: e.id, name: e.name, hasPin: !!e.pinHash }))
+        .sort((x, y) => x.name.localeCompare(y.name, "de")),
     });
   }
   res.json({
@@ -232,7 +254,8 @@ app.get("/api/state", (req, res) => {
 app.post("/api/login", (req, res) => {
   const { employeeId, pin } = req.body || {};
   const emp = data.employees.find((e) => e.id === employeeId && e.active !== false);
-  if (!emp || !emp.pinHash) return res.status(401).json({ error: "Name oder PIN falsch." });
+  if (!emp) return res.status(401).json({ error: "Name oder PIN falsch." });
+  if (!emp.pinHash) return res.status(401).json({ error: "Für dich ist noch keine PIN vergeben. Bitte frag einen Admin." });
   if (isLocked("emp:" + emp.id)) return res.status(429).json({ error: "Zu viele Fehlversuche. Bitte 5 Minuten warten." });
   if (hashPin(str(pin, 20), emp.salt) !== emp.pinHash) { noteFail("emp:" + emp.id); return res.status(401).json({ error: "Name oder PIN falsch." }); }
   failed.delete("emp:" + emp.id);
@@ -379,7 +402,7 @@ app.post("/api/time/clockin", requireUser, (req, res) => {
   const now = Date.now();
   const entry = {
     id: uid(), employeeId, date: localDate(now), start: now, end: null, breaks: [],
-    location: LOCATIONS.includes(location) ? location : null, note: "", manualBreakMin: null,
+    location: LOCS().includes(location) ? location : null, note: "", manualBreakMin: null,
   };
   data.timeEntries.push(entry);
   persist();
@@ -428,7 +451,7 @@ function parseEntryBody(b, existing) {
   manualBreakMin = manualBreakMin === null || manualBreakMin === "" ? null : Math.max(0, Math.round(Number(manualBreakMin) || 0));
   return {
     date, start, end, manualBreakMin,
-    location: b.location !== undefined ? (LOCATIONS.includes(b.location) ? b.location : null) : existing ? existing.location : null,
+    location: b.location !== undefined ? (LOCS().includes(b.location) ? b.location : null) : existing ? existing.location : null,
     note: b.note !== undefined ? str(b.note, 300) : existing ? existing.note : "",
   };
 }
@@ -497,7 +520,7 @@ function applyTaskFields(task, b) {
   if (b.title !== undefined) task.title = str(b.title, 200);
   if (b.description !== undefined) task.description = str(b.description, 2000);
   if (b.employeeId !== undefined) task.employeeId = data.employees.some((e) => e.id === b.employeeId) ? b.employeeId : null;
-  if (b.location !== undefined) task.location = LOCATIONS.includes(b.location) ? b.location : null;
+  if (b.location !== undefined) task.location = LOCS().includes(b.location) ? b.location : null;
   if (b.due !== undefined) task.due = isDate(b.due) ? b.due : null;
   if (b.priority !== undefined) task.priority = PRIORITIES.includes(b.priority) ? b.priority : "normal";
   if (b.status !== undefined && TASK_STATUS.includes(b.status)) {
@@ -557,7 +580,8 @@ function templateFromBody(b, t) {
   const name = str(b.name, 100);
   if (!name) return { error: "Name erforderlich." };
   if (!items.length) return { error: "Mindestens ein Punkt erforderlich." };
-  return { ...(t || { id: uid() }), name, items, location: LOCATIONS.includes(b.location) ? b.location : null };
+  const area = str(b.area !== undefined ? b.area : b.location, 40);
+  return { ...(t || { id: uid() }), name, items, area: AREAS().includes(area) ? area : "Allgemein", location: null };
 }
 
 app.post("/api/checklists/templates", requireAdmin, (req, res) => {
@@ -610,7 +634,7 @@ function shiftFromBody(b, s) {
   if (b.date !== undefined) out.date = b.date;
   if (b.start !== undefined) out.start = b.start;
   if (b.end !== undefined) out.end = b.end;
-  if (b.location !== undefined) out.location = LOCATIONS.includes(b.location) ? b.location : null;
+  if (b.location !== undefined) out.location = LOCS().includes(b.location) ? b.location : null;
   if (b.note !== undefined) out.note = str(b.note, 200);
   if (!data.employees.some((e) => e.id === out.employeeId)) return { error: "Mitarbeiter fehlt." };
   if (!isDate(out.date)) return { error: "Datum ungültig." };
@@ -732,6 +756,30 @@ app.post("/api/push/test", requireUser, async (req, res) => {
   const me = ownerOf(req.auth);
   const sent = await pushTo((s) => s.ownerId === me, { title: "Crew Sport Gefäll", body: "Benachrichtigungen funktionieren ✓", tag: "test", url: "/" });
   res.json({ sent });
+});
+
+// ---------------------------------------------------------------------------
+// Einstellungen: Standorte & Checklisten-Bereiche (nur Admin)
+// ---------------------------------------------------------------------------
+function cleanList(v) {
+  const arr = (Array.isArray(v) ? v : String(v || "").split("\n")).map((x) => str(x, 40)).filter(Boolean);
+  const seen = new Set();
+  return arr.filter((x) => { const k = x.toLowerCase(); if (seen.has(k)) return false; seen.add(k); return true; }).slice(0, 20);
+}
+app.put("/api/settings", requireAdmin, (req, res) => {
+  const b = req.body || {};
+  if (b.locations !== undefined) {
+    const l = cleanList(b.locations);
+    if (!l.length) return res.status(400).json({ error: "Mindestens ein Standort nötig." });
+    data.settings.locations = l;
+  }
+  if (b.areas !== undefined) {
+    const a = cleanList(b.areas);
+    if (!a.length) return res.status(400).json({ error: "Mindestens ein Bereich nötig." });
+    data.settings.areas = a;
+  }
+  persist();
+  res.json(data.settings);
 });
 
 // ---------------------------------------------------------------------------
