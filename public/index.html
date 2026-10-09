@@ -411,19 +411,31 @@ function App() {
 function LoginScreen({ S, offline, onDone, openAdmin }) {
   const [empId, setEmpId] = useState(() => store.get(LAST_EMP_KEY) || "");
   const [pin, setPin] = useState("");
+  const [pin2, setPin2] = useState("");
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
+  const [forceSetup, setForceSetup] = useState(false);
   const list = S.loginEmployees || [];
   useEffect(() => { if (empId && !list.some((e) => e.id === empId)) setEmpId(""); }, [list.length]);
+  const selected = list.find((e) => e.id === empId);
+  const setup = !!selected && (selected.hasPin === false || forceSetup);
   async function submit() {
     setErr("");
     if (!empId) { setErr("Bitte deinen Namen auswählen."); return; }
+    if (setup) {
+      if (!/^[0-9A-Za-z]{4,12}$/.test(pin.trim())) { setErr("PIN: 4–12 Ziffern oder Buchstaben."); return; }
+      if (pin.trim() !== pin2.trim()) { setErr("Die beiden PINs stimmen nicht überein."); return; }
+    }
     setBusy(true);
     try {
-      const r = await api("/login", { method: "POST", body: { employeeId: empId, pin: pin.trim() } });
+      const r = await api(setup ? "/setup-pin" : "/login", { method: "POST", body: { employeeId: empId, pin: pin.trim() } });
       store.set(LAST_EMP_KEY, empId);
       onDone(r);
-    } catch (e) { setErr(e.message); setPin(""); }
+    } catch (e) {
+      if (e.data && e.data.needSetup) { setForceSetup(true); setErr(""); }
+      else setErr(e.message);
+      setPin(""); setPin2("");
+    }
     setBusy(false);
   }
   return (
@@ -443,19 +455,27 @@ function LoginScreen({ S, offline, onDone, openAdmin }) {
           ) : (
             <>
               <Field label="Name">
-                <Select value={empId} onChange={(v) => { setEmpId(v); setErr(""); }}>
+                <Select value={empId} onChange={(v) => { setEmpId(v); setErr(""); setForceSetup(false); setPin(""); setPin2(""); }}>
                   <option value="">Bitte auswählen…</option>
-                  {list.map((e) => <option key={e.id} value={e.id}>{e.name}{e.hasPin === false ? " (noch keine PIN)" : ""}</option>)}
+                  {list.map((e) => <option key={e.id} value={e.id}>{e.name}{e.hasPin === false ? " – erste Anmeldung" : ""}</option>)}
                 </Select>
               </Field>
-              {(list.find((e) => e.id === empId) || {}).hasPin === false && (
-                <p className="text-xs mb-3" style={{ color: COLORS.warn }}>Für dich ist noch keine PIN vergeben. Bitte frag einen Admin – er trägt sie unter Auswertung → Team ein.</p>
+              {setup && (
+                <div className="text-xs mb-3 px-3 py-2 rounded-lg" style={{ background: COLORS.accent2 + "18", color: COLORS.accent2 }}>
+                  👋 Willkommen, {selected.name}! Lege jetzt deine persönliche PIN fest (4–12 Ziffern). Damit meldest du dich ab jetzt an. Bitte nicht deine Bank-PIN verwenden.
+                </div>
               )}
-              <Field label="PIN">
-                <TextInput type="password" inputMode="numeric" autoComplete="current-password" value={pin} onChange={(e) => setPin(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submit()} />
+              <Field label={setup ? "Neue PIN" : "PIN"}>
+                <TextInput type="password" inputMode="numeric" autoComplete={setup ? "new-password" : "current-password"} value={pin} onChange={(e) => setPin(e.target.value)} onKeyDown={(e) => e.key === "Enter" && !setup && submit()} />
               </Field>
+              {setup && (
+                <Field label="PIN wiederholen">
+                  <TextInput type="password" inputMode="numeric" autoComplete="new-password" value={pin2} onChange={(e) => setPin2(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submit()} />
+                </Field>
+              )}
               {err && <p className="text-xs mb-2" style={{ color: COLORS.danger }}>{err}</p>}
-              <Btn onClick={submit} disabled={busy} className="w-full py-2.5">Anmelden</Btn>
+              <Btn onClick={submit} disabled={busy} className="w-full py-2.5">{setup ? "PIN festlegen & anmelden" : "Anmelden"}</Btn>
+              {!setup && <p className="text-[11px] mt-2 text-center" style={{ color: COLORS.textDim }}>PIN vergessen? Ein Admin kann sie dir sagen.</p>}
             </>
           )}
         </Panel>
@@ -1377,23 +1397,41 @@ function EntryModal({ S, act, init, onClose }) {
   );
 }
 
-function TeamView({ S, act, openAdmins }) {
+function PinReveal({ emp, token }) {
+  const [pin, setPin] = useState(null);
+  const [note, setNote] = useState("");
+  useEffect(() => { if (pin === null) return; const t = setTimeout(() => setPin(null), 15000); return () => clearTimeout(t); }, [pin]);
+  async function show() {
+    setNote("");
+    try {
+      const r = await api("/employees/" + emp.id + "/pin", { token });
+      if (r.pin) setPin(r.pin); else setNote("noch unbekannt – wird bei der nächsten Anmeldung sichtbar, oder zurücksetzen");
+    } catch (e) { setNote(e.message); }
+  }
+  return (
+    <span>
+      🔑 PIN: {pin ? <b className="tabular-nums tracking-widest" style={{ color: COLORS.text }}>{pin}</b> : "••••"}{" "}
+      {!pin && <button onClick={show} className="underline" style={{ color: COLORS.accent }}>👁 anzeigen</button>}
+      {note && <span style={{ color: COLORS.warn }}> · {note}</span>}
+    </span>
+  );
+}
+
+function TeamView({ S, act, openAdmins, token }) {
   const [name, setName] = useState("");
-  const [pin, setPin] = useState("");
   const [edit, setEdit] = useState(null);
   async function add() {
     if (!name.trim()) return;
-    try { await act("/employees", { method: "POST", body: { name, pin } }); setName(""); setPin(""); } catch (e) {}
+    try { await act("/employees", { method: "POST", body: { name } }); setName(""); } catch (e) {}
   }
   return (
     <div>
       <Panel className="mb-4">
         <div className="flex flex-col sm:flex-row gap-2">
-          <TextInput value={name} onChange={(e) => setName(e.target.value)} placeholder="Name neuer Mitarbeiter" className="flex-1" />
-          <div className="sm:w-40"><TextInput type="text" inputMode="numeric" autoComplete="off" value={pin} onChange={(e) => setPin(e.target.value)} onKeyDown={(e) => e.key === "Enter" && add()} placeholder="PIN (4+ Zeichen)" /></div>
+          <TextInput value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => e.key === "Enter" && add()} placeholder="Name neuer Mitarbeiter" className="flex-1" />
           <Btn onClick={add}>+ Anlegen</Btn>
         </div>
-        <p className="text-[11px] mt-2" style={{ color: COLORS.textDim }}>Gib dem Mitarbeiter seine PIN persönlich weiter. Er meldet sich damit an, sieht nur seine eigenen Zeiten und kann die PIN selbst ändern (🔑).</p>
+        <p className="text-[11px] mt-2" style={{ color: COLORS.textDim }}>Der Mitarbeiter wählt beim ersten Öffnen der App seinen Namen und legt seine PIN selbst fest. Vergisst jemand die PIN, kannst du sie hier mit 👁 anzeigen oder zurücksetzen.</p>
       </Panel>
       <div className="space-y-2 mb-4">
         {S.employees.map((e) => (
@@ -1401,7 +1439,7 @@ function TeamView({ S, act, openAdmins }) {
             <div>
               <p className="text-sm font-medium">{e.name} {!e.active && <span className="text-xs" style={{ color: COLORS.textDim }}>(inaktiv)</span>}</p>
               <p className="text-xs" style={{ color: COLORS.textDim }}>
-                {e.hasPin ? "🔑 PIN gesetzt" : <span style={{ color: COLORS.warn }}>⚠ Keine PIN – kann sich nicht anmelden</span>}{e.weeklyHours ? ` · ${e.weeklyHours} h/Woche` : ""}
+                {e.hasPin ? <PinReveal emp={e} token={token} /> : <span style={{ color: COLORS.warn }}>⏳ Wartet auf erste Anmeldung (legt PIN selbst fest)</span>}{e.weeklyHours ? ` · ${e.weeklyHours} h/Woche` : ""}
               </p>
             </div>
             <Btn kind="ghost" onClick={() => setEdit(e)} className="text-xs">Bearbeiten</Btn>
@@ -1453,6 +1491,10 @@ function EmployeeModal({ emp, act, onClose }) {
     if (pin) body.pin = pin;
     try { await act("/employees/" + emp.id, { method: "PATCH", body }); onClose(); } catch (e) {}
   }
+  async function resetPin() {
+    if (!confirm(`PIN von ${emp.name} zurücksetzen?\n\n${emp.name} wird abgemeldet und legt beim nächsten Öffnen der App eine neue PIN fest.`)) return;
+    try { await act("/employees/" + emp.id, { method: "PATCH", body: { resetPin: true } }); onClose(); } catch (e) {}
+  }
   async function del() {
     if (!confirm(`${emp.name} endgültig löschen? Alle Zeiteinträge und Schichten werden ebenfalls gelöscht!\n\nTipp: Besser auf „inaktiv“ setzen.`)) return;
     try { await act("/employees/" + emp.id, { method: "DELETE" }); onClose(); } catch (e) {}
@@ -1462,9 +1504,10 @@ function EmployeeModal({ emp, act, onClose }) {
       <h3 className="text-sm font-medium mb-3">Mitarbeiter bearbeiten</h3>
       <Field label="Name"><TextInput value={name} onChange={(e) => setName(e.target.value)} /></Field>
       <Field label="Soll-Stunden pro Woche (optional)"><TextInput type="number" min="0" value={hours} onChange={(e) => setHours(e.target.value)} /></Field>
-      <Field label={emp.hasPin ? "Neue PIN vergeben (leer = unverändert, z. B. wenn vergessen)" : "PIN vergeben (4+ Zeichen) – nötig für die Anmeldung"}>
-        <TextInput type="text" inputMode="numeric" autoComplete="off" value={pin} onChange={(e) => setPin(e.target.value)} />
+      <Field label="PIN selbst festlegen (optional – sonst legt der Mitarbeiter sie selbst fest)">
+        <TextInput type="text" inputMode="numeric" autoComplete="off" value={pin} onChange={(e) => setPin(e.target.value)} placeholder="leer lassen = unverändert" />
       </Field>
+      {emp.hasPin && <button onClick={resetPin} className="text-xs underline mb-3 block" style={{ color: COLORS.warn }}>🔄 PIN zurücksetzen (Mitarbeiter legt neue fest)</button>}
       <label className="flex items-center gap-2 text-sm mb-4">
         <input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} /> Aktiv (erscheint in Zeiterfassung & Plan)
       </label>
