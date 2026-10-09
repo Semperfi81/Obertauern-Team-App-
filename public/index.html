@@ -56,14 +56,15 @@ const COLORS = {
   accent: "#E8A33D", accent2: "#4DA8A0", text: "#E9EAEC",
   textDim: "#8C919E", danger: "#D5694B", warn: "#E0B341",
 };
-const LOC_COLORS = {
-  "E-Bike Verleih": "#4DA8A0",
-  "Trial / Funpark": "#D5694B",
-  "Footgolf": "#7FB069",
-  "Alpine Mini Market": "#E8A33D",
-  "Allgemein": "#8C919E",
-};
-const locColor = (l) => LOC_COLORS[l] || COLORS.textDim;
+// Farben für Standorte/Bereiche – feste Farbe pro Name, damit sie überall gleich aussieht
+const LOC_PALETTE = ["#4DA8A0", "#E8A33D", "#6FA8DC", "#D5694B", "#7FB069", "#B48EDB", "#E07A9B", "#C9B458"];
+const LOC_FIXED = { "Allgemein": "#8C919E", "Haupt": "#4DA8A0", "Grünwaldkopf": "#6FA8DC", "Skiverleih": "#6FA8DC", "Alpine Mini Market": "#E8A33D" };
+function locColor(l) {
+  if (!l) return COLORS.textDim;
+  if (LOC_FIXED[l]) return LOC_FIXED[l];
+  let h = 0; for (const c of l) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+  return LOC_PALETTE[h % LOC_PALETTE.length];
+}
 
 // ---------- Datum & Zeit (immer lokale Zeit, nicht UTC) ----------
 const pad = (n) => String(n).padStart(2, "0");
@@ -952,7 +953,7 @@ function TaskModal({ S, act, isAdmin, me, task, onClose }) {
   return (
     <Modal onClose={onClose} wide>
       <h3 className="text-sm font-medium mb-3">{task ? "Aufgabe" : "Neue Aufgabe"}</h3>
-      <Field label="Titel"><TextInput value={f.title} onChange={set("title")} autoFocus={!task} placeholder="z. B. Akkus E-Bikes laden" /></Field>
+      <Field label="Titel"><TextInput value={f.title} onChange={set("title")} autoFocus={!task} placeholder="z. B. Leihski für Reservierung herrichten" /></Field>
       <Field label="Beschreibung">
         <textarea value={f.description} onChange={set("description")} rows={3} className="w-full px-3 py-2 rounded-lg" style={inputStyle} placeholder="optional" />
       </Field>
@@ -1039,11 +1040,10 @@ function TodosView({ S, me, isAdmin, act }) {
 // CHECKLISTEN
 // =====================================================================
 const SAMPLE_CHECKLISTS = [
-  { name: "E-Bike Verleih öffnen", location: "E-Bike Verleih", items: ["Akkus kontrollieren / laden", "Bikes rausstellen", "Helme & Schlösser bereitlegen", "Kasse / Kartenterminal einschalten", "Werkstatt-Checkliste Bikes prüfen"] },
-  { name: "E-Bike Verleih schließen", location: "E-Bike Verleih", items: ["Alle Bikes zurück & gezählt", "Schäden notiert", "Akkus an Ladegerät", "Kassenabschluss", "Abschließen & Alarm"] },
-  { name: "Funpark Kontrolle", location: "Trial / Funpark", items: ["Strecke abgehen", "Hindernisse sicher", "Schutzausrüstung vollständig"] },
-  { name: "Footgolf Platzrunde", location: "Footgolf", items: ["Fahnen & Löcher prüfen", "Bälle zählen", "Scorekarten & Stifte auffüllen", "Müll einsammeln"] },
-  { name: "Alpine Mini Market schließen", location: "Alpine Mini Market", items: ["Kühlregale kontrollieren", "Ware nachfüllen / Bestellung notieren", "Kassenabschluss", "Licht aus & abschließen"] },
+  { name: "Skiverleih öffnen", area: "Skiverleih", items: ["Licht & Heizung an", "Kasse / Kartenterminal einschalten", "Ski & Snowboards aus dem Depot bereitstellen", "Helme & Skischuhe sortiert", "Reservierungen für heute prüfen", "Schuhtrockner einschalten"] },
+  { name: "Skiverleih schließen", area: "Skiverleih", items: ["Alle Leihgeräte zurück & gezählt", "Schäden notiert / zum Service", "Skischuhe in Trockner", "Kassenabschluss", "Depot & Türen abgeschlossen"] },
+  { name: "Ski-Service", area: "Skiverleih", items: ["Servicezettel abgearbeitet", "Kanten & Belag geprüft", "Wachs aufgefüllt", "Bindungen eingestellt & dokumentiert"] },
+  { name: "Alpine Mini Market schließen", area: "Alpine Mini Market", items: ["Kühlregale kontrollieren", "Ware nachfüllen / Bestellung notieren", "Kassenabschluss", "Licht aus & abschließen"] },
 ];
 
 function ChecklistenTab({ S, me, isAdmin, act, setError }) {
@@ -1062,7 +1062,10 @@ function ChecklistenTab({ S, me, isAdmin, act, setError }) {
   }
 
   const groups = {};
-  S.checklistTemplates.forEach((t) => { const k = t.location || "Allgemein"; (groups[k] = groups[k] || []).push(t); });
+  // Reihenfolge wie in den Einstellungen, unbekannte Bereiche am Ende
+  (S.areas || []).forEach((a) => { groups[a] = []; });
+  S.checklistTemplates.forEach((t) => { const k = t.area || "Allgemein"; (groups[k] = groups[k] || []).push(t); });
+  Object.keys(groups).forEach((k) => { if (!groups[k].length) delete groups[k]; });
 
   return (
     <div>
@@ -1072,7 +1075,7 @@ function ChecklistenTab({ S, me, isAdmin, act, setError }) {
           <div className="text-sm min-w-[130px] text-center">{date === today ? "Heute" : fmtDateShort(date)}</div>
           <button disabled={date >= today} onClick={() => setDate(addDays(date, 1))} className="w-9 h-9 rounded-lg disabled:opacity-30" style={{ border: `1px solid ${COLORS.panelBorder}`, color: COLORS.textDim }}>›</button>
         </div>
-        {isAdmin && <Btn kind="ghost" onClick={() => setEdit({})} className="text-xs">+ Checkliste</Btn>}
+        {isAdmin && <Btn kind="ghost" onClick={() => setEdit({})} className="text-xs">+ Neue Checkliste</Btn>}
       </div>
 
       {S.checklistTemplates.length === 0 && (
@@ -1136,10 +1139,11 @@ function ChecklistenTab({ S, me, isAdmin, act, setError }) {
 
 function TemplateModal({ S, act, tpl, onClose }) {
   const [name, setName] = useState(tpl ? tpl.name : "");
-  const [location, setLocation] = useState(tpl ? tpl.location || "" : "");
+  const [area, setArea] = useState(tpl ? tpl.area || "Allgemein" : (S.areas || ["Allgemein"])[0]);
+  const areaOptions = [...(S.areas || [])]; if (area && !areaOptions.includes(area)) areaOptions.push(area);
   const [items, setItems] = useState(tpl ? tpl.items.join("\n") : "");
   async function save() {
-    try { await act(tpl ? "/checklists/templates/" + tpl.id : "/checklists/templates", { method: tpl ? "PATCH" : "POST", body: { name, location: location || null, items } }); onClose(); } catch (e) {}
+    try { await act(tpl ? "/checklists/templates/" + tpl.id : "/checklists/templates", { method: tpl ? "PATCH" : "POST", body: { name, area, items } }); onClose(); } catch (e) {}
   }
   async function del() {
     if (!confirm("Checkliste inkl. Verlauf löschen?")) return;
@@ -1148,8 +1152,8 @@ function TemplateModal({ S, act, tpl, onClose }) {
   return (
     <Modal onClose={onClose} wide>
       <h3 className="text-sm font-medium mb-3">{tpl ? "Checkliste bearbeiten" : "Neue Checkliste"}</h3>
-      <Field label="Name"><TextInput value={name} onChange={(e) => setName(e.target.value)} placeholder="z. B. Verleih öffnen" /></Field>
-      <Field label="Standort"><Select value={location} onChange={setLocation}><option value="">Allgemein</option>{S.locations.filter((l) => l !== "Allgemein").map((l) => <option key={l} value={l}>{l}</option>)}</Select></Field>
+      <Field label="Name"><TextInput value={name} onChange={(e) => setName(e.target.value)} placeholder="z. B. Skiverleih öffnen" /></Field>
+      <Field label="Bereich"><Select value={area} onChange={setArea}>{areaOptions.map((a) => <option key={a} value={a}>{a}</option>)}</Select></Field>
       <Field label="Punkte (einer pro Zeile)">
         <textarea value={items} onChange={(e) => setItems(e.target.value)} rows={8} className="w-full px-3 py-2 rounded-lg" style={inputStyle} />
       </Field>
@@ -1169,10 +1173,11 @@ function AdminTab(props) {
   const [view, setView] = useState("monat");
   return (
     <div>
-      <div className="mb-4 overflow-x-auto"><Segmented value={view} onChange={setView} options={[{ id: "monat", label: "📊 Monat" }, { id: "eintraege", label: "✎ Einträge" }, { id: "team", label: "👥 Team" }]} /></div>
+      <div className="mb-4 overflow-x-auto"><Segmented value={view} onChange={setView} options={[{ id: "monat", label: "📊 Monat" }, { id: "eintraege", label: "✎ Einträge" }, { id: "team", label: "👥 Team" }, { id: "settings", label: "⚙️ Einstellungen" }]} /></div>
       {view === "monat" && <MonthView {...props} />}
       {view === "eintraege" && <EntriesView {...props} />}
       {view === "team" && <TeamView {...props} />}
+      {view === "settings" && <SettingsView {...props} />}
     </div>
   );
 }
@@ -1393,6 +1398,35 @@ function TeamView({ S, act, openAdmins }) {
       </div>
       <Btn kind="ghost" onClick={openAdmins}>🔐 Admins verwalten</Btn>
       {edit && <EmployeeModal emp={edit} act={act} onClose={() => setEdit(null)} />}
+    </div>
+  );
+}
+
+function SettingsView({ S, act }) {
+  const [locs, setLocs] = useState((S.locations || []).join("\n"));
+  const [areas, setAreas] = useState((S.areas || []).join("\n"));
+  const [msg, setMsg] = useState("");
+  async function save() {
+    setMsg("");
+    try { await act("/settings", { method: "PUT", body: { locations: locs, areas } }); setMsg("Gespeichert ✓"); } catch (e) {}
+  }
+  return (
+    <div className="grid sm:grid-cols-2 gap-3">
+      <Panel>
+        <h3 className="text-sm font-medium mb-1">📍 Standorte</h3>
+        <p className="text-xs mb-2" style={{ color: COLORS.textDim }}>Für Einstempeln, Schichtplan und Aufgaben. Ein Standort pro Zeile.</p>
+        <textarea value={locs} onChange={(e) => setLocs(e.target.value)} rows={6} className="w-full px-3 py-2 rounded-lg" style={inputStyle} />
+      </Panel>
+      <Panel>
+        <h3 className="text-sm font-medium mb-1">☑️ Bereiche für Checklisten</h3>
+        <p className="text-xs mb-2" style={{ color: COLORS.textDim }}>Gruppierung der Checklisten. Ein Bereich pro Zeile.</p>
+        <textarea value={areas} onChange={(e) => setAreas(e.target.value)} rows={6} className="w-full px-3 py-2 rounded-lg" style={inputStyle} />
+      </Panel>
+      <div className="sm:col-span-2 flex items-center gap-3">
+        <Btn onClick={save}>Speichern</Btn>
+        {msg && <span className="text-xs" style={{ color: COLORS.accent2 }}>{msg}</span>}
+        <span className="text-[11px]" style={{ color: COLORS.textDim }}>Bestehende Einträge behalten ihren alten Standort-Namen.</span>
+      </div>
     </div>
   );
 }
