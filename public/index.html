@@ -48,9 +48,8 @@
 <script type="text/babel" data-presets="react">
 const { useState, useEffect, useCallback, useMemo, useRef } = React;
 
-const TOKEN_KEY = "team-app-admin-token";
-const NAME_KEY = "team-app-admin-name";
-const ME_KEY = "team-app-me";
+const TOKEN_KEY = "team-app-token";
+const LAST_EMP_KEY = "team-app-last-employee";
 
 const COLORS = {
   bg: "#15171C", panel: "#1C1F26", panelBorder: "#2A2E38",
@@ -223,9 +222,10 @@ function WeekNav({ monday, setMonday }) {
 // ---------- Tabs ----------
 const TABS = [
   { id: "zeit", label: "Zeit", icon: "🕒" },
-  { id: "schichten", label: "Schichtplan", icon: "📅" },
+  { id: "schichten", label: "Schichten", icon: "📅" },
   { id: "aufgaben", label: "Aufgaben", icon: "📋" },
-  { id: "checklisten", label: "Checklisten", icon: "☑️" },
+  { id: "checklisten", label: "Listen", icon: "☑️" },
+  { id: "chat", label: "Chat", icon: "💬" },
 ];
 const ADMIN_TAB = { id: "admin", label: "Auswertung", icon: "📊" };
 
@@ -234,26 +234,21 @@ function App() {
   const [error, setError] = useState("");
   const [offline, setOffline] = useState(false);
   const [tab, setTab] = useState("zeit");
-  const [S, setS] = useState({ employees: [], timeEntries: [], todos: [], tasks: [], shifts: [], checklistTemplates: [], checklistRuns: [], locations: [] });
-  const [me, setMeState] = useState(() => store.get(ME_KEY));
-  const setMe = (id) => { setMeState(id); store.set(ME_KEY, id); };
-
-  const [token, setToken] = useState(() => store.get(TOKEN_KEY));
-  const [adminName, setAdminName] = useState(() => store.get(NAME_KEY));
-  const [adminCount, setAdminCount] = useState(0);
-  const isAdmin = !!adminName && !!token;
+  const [S, setS] = useState({ role: null, employees: [], timeEntries: [], todos: [], tasks: [], shifts: [], checklistTemplates: [], checklistRuns: [], locations: [], loginEmployees: [] });
+  const [token, setTokenState] = useState(() => store.get(TOKEN_KEY));
+  const setToken = (t) => { setTokenState(t); store.set(TOKEN_KEY, t); };
   const [authView, setAuthView] = useState(null);
-  const [pinPrompt, setPinPrompt] = useState(null);
+
+  const role = S.role;
+  const isAdmin = role === "admin";
+  const me = S.me ? S.me.id : null;
 
   const refresh = useCallback(async () => {
     try {
       const d = await api("/state", { token });
-      setS(d);
-      setAdminCount(d.adminCount || 0);
+      setS((prev) => ({ ...prev, ...d }));
       setOffline(false);
-      if (!d.isAdmin && token) {
-        setAdminName(null); setToken(null); store.set(TOKEN_KEY, null); store.set(NAME_KEY, null);
-      }
+      if (!d.role && token) setToken(null); // Anmeldung abgelaufen / PIN geändert
     } catch (e) {
       setOffline(true);
     }
@@ -268,10 +263,7 @@ function App() {
     return () => { clearInterval(id); document.removeEventListener("visibilitychange", onVis); };
   }, [refresh]);
 
-  const activeEmployees = S.employees.filter((e) => e.active);
-  useEffect(() => {
-    if (me && !S.employees.some((e) => e.id === me) && !loading) setMe(null);
-  }, [S.employees, loading]);
+  const activeEmployees = (S.employees || []).filter((e) => e.active);
 
   // Führt eine Änderung aus und lädt danach neu
   const act = useCallback(async (path, opts = {}) => {
@@ -279,35 +271,24 @@ function App() {
       const r = await api(path, { token, ...opts });
       await refresh();
       return r;
-    } catch (e) { setError(e.message); throw e; }
-  }, [token, refresh]);
-
-  // Mitarbeiter-Aktion mit optionaler PIN-Abfrage
-  const empAct = useCallback(async (employeeId, path, body = {}) => {
-    try {
-      const r = await api(path, { method: "POST", token, body: { employeeId, ...body } });
-      await refresh(); return r;
     } catch (e) {
-      if (!(e.data && e.data.needPin)) { setError(e.message); return; }
-      const emp = S.employees.find((x) => x.id === employeeId);
-      const pin = await new Promise((resolve) => setPinPrompt({ name: emp ? emp.name : "", resolve }));
-      setPinPrompt(null);
-      if (!pin) return;
-      try {
-        const r = await api(path, { method: "POST", token, body: { employeeId, pin, ...body } });
-        await refresh(); return r;
-      } catch (e2) { setError(e2.message); }
+      if (e.data && e.data.needLogin) { setToken(null); }
+      setError(e.message); throw e;
     }
-  }, [token, refresh, S.employees]);
+  }, [token, refresh]);
+  // Stempeln: Mitarbeiter immer für sich selbst, Admin für die gewählte Person
+  const empAct = useCallback((employeeId, path, body = {}) => act(path, { method: "POST", body: { employeeId, ...body } }).catch(() => {}), [act]);
 
   function loginDone(res) {
-    setToken(res.token); setAdminName(res.name);
-    store.set(TOKEN_KEY, res.token); store.set(NAME_KEY, res.name);
-    setAuthView(null);
+    setToken(res.token);
+    setAuthView(null); setTab("zeit"); setError("");
   }
-  function logoutAdmin() {
-    setAdminName(null); setToken(null); store.set(TOKEN_KEY, null); store.set(NAME_KEY, null);
-    if (tab === "admin") setTab("zeit");
+  async function logout() {
+    if (!confirm("Abmelden?")) return;
+    if (role === "employee") await api("/logout", { method: "POST", token }).catch(() => {});
+    setToken(null);
+    setS((p) => ({ ...p, role: null, me: null, timeEntries: [], employees: [] }));
+    setTab("zeit");
   }
 
   if (loading) {
@@ -318,8 +299,19 @@ function App() {
     );
   }
 
+  if (!role) {
+    return (
+      <>
+        <LoginScreen S={S} offline={offline} onDone={loginDone} openAdmin={() => setAuthView(S.adminCount === 0 ? "setup" : "login")} />
+        {(authView === "setup" || authView === "login") && <AuthModal mode={authView} onDone={loginDone} onClose={() => setAuthView(null)} />}
+      </>
+    );
+  }
+
   const tabs = isAdmin ? [...TABS, ADMIN_TAB] : TABS;
-  const ctx = { S, me, setMe, isAdmin, token, act, empAct, setError, activeEmployees, openAdmins: () => setAuthView("manage") };
+  const ctx = { S, me, isAdmin, token, act, empAct, setError, activeEmployees, openAdmins: () => setAuthView("manage") };
+  const displayName = isAdmin ? S.adminName : (S.me || {}).name;
+  const unread = chatUnread(S);
 
   return (
     <div style={{ background: COLORS.bg, color: COLORS.text, minHeight: "100vh" }} className="font-sans">
@@ -332,11 +324,15 @@ function App() {
               <p className="text-xs truncate" style={{ color: COLORS.textDim }}>{fmtDateLong(todayISO())}</p>
             </div>
           </div>
-          <button onClick={() => (isAdmin ? confirm("Als Admin abmelden?") && logoutAdmin() : setAuthView(adminCount === 0 ? "setup" : "login"))}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium flex-shrink-0"
-            style={{ background: isAdmin ? COLORS.accent + "22" : COLORS.panel, border: `1px solid ${isAdmin ? COLORS.accent : COLORS.panelBorder}`, color: isAdmin ? COLORS.accent : COLORS.textDim }}>
-            {isAdmin ? <>🔓 {adminName}<span className="hidden sm:inline"> · Abmelden</span></> : "🔒 Admin"}
-          </button>
+          <div className="flex items-center gap-1.5 flex-shrink-0">
+            {!isAdmin && (
+              <button onClick={() => setAuthView("pin")} title="PIN ändern" className="px-2.5 py-1.5 rounded-full text-xs" style={{ border: `1px solid ${COLORS.panelBorder}`, color: COLORS.textDim }}>🔑</button>
+            )}
+            <button onClick={logout} className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium"
+              style={{ background: (isAdmin ? COLORS.accent : COLORS.accent2) + "22", border: `1px solid ${isAdmin ? COLORS.accent : COLORS.accent2}`, color: isAdmin ? COLORS.accent : COLORS.accent2 }}>
+              {isAdmin ? "🔓" : "👤"} {displayName}<span className="hidden sm:inline"> · Abmelden</span>
+            </button>
+          </div>
         </header>
 
         {offline && (
@@ -349,33 +345,18 @@ function App() {
             <span>{error}</span><button onClick={() => setError("")} className="underline">schließen</button>
           </div>
         )}
+        {isAdmin && activeEmployees.length === 0 && (
+          <div className="mb-4 px-3 py-2 rounded-lg text-xs" style={{ background: COLORS.accent + "18", border: `1px solid ${COLORS.accent}`, color: COLORS.accent }}>
+            Noch keine Mitarbeiter – unter 📊 Auswertung → Team anlegen (mit PIN).
+          </div>
+        )}
 
-        {/* Wer bin ich? */}
-        <div className="flex items-center gap-2 mb-4 overflow-x-auto scrollbar-thin pb-1">
-          <span className="text-xs flex-shrink-0" style={{ color: COLORS.textDim }}>Ich bin:</span>
-          {activeEmployees.map((e) => (
-            <button key={e.id} onClick={() => setMe(me === e.id ? null : e.id)}
-              className="flex-shrink-0 px-3 py-1.5 rounded-full text-sm"
-              style={{ background: me === e.id ? COLORS.accent2 + "22" : COLORS.panel, border: `1px solid ${me === e.id ? COLORS.accent2 : COLORS.panelBorder}`, color: me === e.id ? COLORS.accent2 : COLORS.text }}>
-              {e.name}
-            </button>
-          ))}
-          {activeEmployees.length === 0 && (
-            <span className="text-xs" style={{ color: COLORS.textDim }}>
-              {isAdmin || adminCount === 0 ? "Noch keine Mitarbeiter – unter 📊 Auswertung → Team anlegen." : "Noch keine Mitarbeiter. Ein Admin muss sie anlegen."}
-            </span>
-          )}
-          {adminCount === 0 && !isAdmin && (
-            <button onClick={() => setAuthView("setup")} className="text-xs underline flex-shrink-0" style={{ color: COLORS.accent }}>Jetzt Admin einrichten</button>
-          )}
-        </div>
-
-        {/* Tabs: oben auf Desktop, unten auf dem Handy */}
         <nav className="hidden sm:flex gap-1 mb-5 p-1 rounded-xl" style={{ background: COLORS.panel, border: `1px solid ${COLORS.panelBorder}` }}>
           {tabs.map(({ id, label, icon }) => (
             <button key={id} onClick={() => setTab(id)} className="flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-sm font-medium"
               style={{ background: tab === id ? COLORS.accent : "transparent", color: tab === id ? "#1A1A1A" : COLORS.textDim }}>
               <span>{icon}</span><span>{label}</span>
+              {id === "chat" && unread > 0 && tab !== "chat" && <span className="text-[10px] px-1.5 rounded-full" style={{ background: COLORS.danger, color: "#fff" }}>{unread}</span>}
             </button>
           ))}
         </nav>
@@ -384,6 +365,7 @@ function App() {
         {tab === "schichten" && <SchichtTab {...ctx} />}
         {tab === "aufgaben" && <AufgabenTab {...ctx} />}
         {tab === "checklisten" && <ChecklistenTab {...ctx} />}
+        {tab === "chat" && <ChatTab {...ctx} />}
         {tab === "admin" && isAdmin && <AdminTab {...ctx} />}
       </div>
 
@@ -391,16 +373,71 @@ function App() {
         {tabs.map(({ id, label, icon }) => (
           <button key={id} onClick={() => setTab(id)} className="flex-1 flex flex-col items-center py-2 text-[10px] font-medium"
             style={{ color: tab === id ? COLORS.accent : COLORS.textDim }}>
-            <span className="text-lg leading-none mb-0.5">{icon}</span>{label}
+            <span className="text-lg leading-none mb-0.5 relative">{icon}
+              {id === "chat" && unread > 0 && tab !== "chat" && <span className="absolute -top-1 -right-2.5 text-[9px] min-w-[16px] h-4 px-1 rounded-full flex items-center justify-center" style={{ background: COLORS.danger, color: "#fff" }}>{unread > 99 ? "99+" : unread}</span>}
+            </span>{label}
           </button>
         ))}
       </nav>
 
-      {(authView === "setup" || authView === "login") && (
-        <AuthModal mode={authView} onDone={loginDone} onClose={() => setAuthView(null)} />
-      )}
       {authView === "manage" && <AdminManageModal token={token} onClose={() => setAuthView(null)} />}
-      {pinPrompt && <PinModal name={pinPrompt.name} onSubmit={(p) => pinPrompt.resolve(p)} onClose={() => pinPrompt.resolve(null)} />}
+      {authView === "pin" && <ChangePinModal token={token} onClose={() => setAuthView(null)} />}
+    </div>
+  );
+}
+
+function LoginScreen({ S, offline, onDone, openAdmin }) {
+  const [empId, setEmpId] = useState(() => store.get(LAST_EMP_KEY) || "");
+  const [pin, setPin] = useState("");
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  const list = S.loginEmployees || [];
+  useEffect(() => { if (empId && !list.some((e) => e.id === empId)) setEmpId(""); }, [list.length]);
+  async function submit() {
+    setErr("");
+    if (!empId) { setErr("Bitte deinen Namen auswählen."); return; }
+    setBusy(true);
+    try {
+      const r = await api("/login", { method: "POST", body: { employeeId: empId, pin: pin.trim() } });
+      store.set(LAST_EMP_KEY, empId);
+      onDone(r);
+    } catch (e) { setErr(e.message); setPin(""); }
+    setBusy(false);
+  }
+  return (
+    <div style={{ background: COLORS.bg, color: COLORS.text, minHeight: "100vh" }} className="font-sans flex items-center justify-center px-4 py-8">
+      <div className="w-full max-w-sm">
+        <div className="flex flex-col items-center mb-6">
+          <img src="/icon-512.png" alt="" className="w-32 h-32 rounded-full mb-3" />
+          <h1 className="text-xl font-semibold">Crew Sport Gefäll</h1>
+          <p className="text-sm" style={{ color: COLORS.textDim }}>Team-App · Anmeldung</p>
+        </div>
+        {offline && <p className="text-xs mb-3 text-center" style={{ color: COLORS.warn }}>Keine Verbindung zum Server.</p>}
+        <Panel>
+          {list.length === 0 ? (
+            <p className="text-sm mb-3" style={{ color: COLORS.textDim }}>
+              {S.adminCount === 0 ? "Willkommen! Richte zuerst einen Admin ein und lege danach die Mitarbeiter an." : "Noch keine Mitarbeiter mit PIN angelegt. Ein Admin muss dich zuerst anlegen."}
+            </p>
+          ) : (
+            <>
+              <Field label="Name">
+                <Select value={empId} onChange={(v) => { setEmpId(v); setErr(""); }}>
+                  <option value="">Bitte auswählen…</option>
+                  {list.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
+                </Select>
+              </Field>
+              <Field label="PIN">
+                <TextInput type="password" inputMode="numeric" autoComplete="current-password" value={pin} onChange={(e) => setPin(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submit()} />
+              </Field>
+              {err && <p className="text-xs mb-2" style={{ color: COLORS.danger }}>{err}</p>}
+              <Btn onClick={submit} disabled={busy} className="w-full py-2.5">Anmelden</Btn>
+            </>
+          )}
+        </Panel>
+        <button onClick={openAdmin} className="w-full text-center text-xs mt-4 underline" style={{ color: S.adminCount === 0 ? COLORS.accent : COLORS.textDim }}>
+          {S.adminCount === 0 ? "Ersten Admin einrichten" : "🔒 Als Admin anmelden"}
+        </button>
+      </div>
     </div>
   );
 }
@@ -430,15 +467,30 @@ function AuthModal({ mode, onDone, onClose }) {
   );
 }
 
-function PinModal({ name, onSubmit, onClose }) {
-  const [pin, setPin] = useState("");
+function ChangePinModal({ token, onClose }) {
+  const [oldPin, setOldPin] = useState("");
+  const [newPin, setNewPin] = useState("");
+  const [newPin2, setNewPin2] = useState("");
+  const [msg, setMsg] = useState("");
+  const [err, setErr] = useState("");
+  async function save() {
+    setErr(""); setMsg("");
+    if (newPin.length < 4) { setErr("Neue PIN muss mind. 4 Zeichen haben."); return; }
+    if (newPin !== newPin2) { setErr("Die neuen PINs stimmen nicht überein."); return; }
+    try { await api("/me/pin", { method: "POST", token, body: { oldPin, newPin } }); setMsg("PIN geändert ✓"); setOldPin(""); setNewPin(""); setNewPin2(""); }
+    catch (e) { setErr(e.message); }
+  }
   return (
     <Modal onClose={onClose}>
-      <h3 className="text-sm font-medium mb-3">PIN für {name}</h3>
-      <TextInput type="password" inputMode="numeric" autoFocus value={pin} onChange={(e) => setPin(e.target.value)} onKeyDown={(e) => e.key === "Enter" && onSubmit(pin)} />
-      <div className="flex gap-2 mt-3">
-        <Btn onClick={() => onSubmit(pin)} className="flex-1">OK</Btn>
-        <Btn kind="ghost" onClick={onClose}>Abbrechen</Btn>
+      <h3 className="text-sm font-medium mb-3">Eigene PIN ändern</h3>
+      <Field label="Aktuelle PIN"><TextInput type="password" inputMode="numeric" value={oldPin} onChange={(e) => setOldPin(e.target.value)} autoFocus /></Field>
+      <Field label="Neue PIN"><TextInput type="password" inputMode="numeric" value={newPin} onChange={(e) => setNewPin(e.target.value)} /></Field>
+      <Field label="Neue PIN wiederholen"><TextInput type="password" inputMode="numeric" value={newPin2} onChange={(e) => setNewPin2(e.target.value)} onKeyDown={(e) => e.key === "Enter" && save()} /></Field>
+      {err && <p className="text-xs mb-2" style={{ color: COLORS.danger }}>{err}</p>}
+      {msg && <p className="text-xs mb-2" style={{ color: COLORS.accent2 }}>{msg}</p>}
+      <div className="flex gap-2">
+        <Btn onClick={save} className="flex-1">Speichern</Btn>
+        <Btn kind="ghost" onClick={onClose}>Schließen</Btn>
       </div>
     </Modal>
   );
@@ -492,8 +544,9 @@ function ZeitTab({ S, me, isAdmin, empAct, activeEmployees }) {
   useEffect(() => { const id = setInterval(() => setTick((t) => t + 1), 1000); return () => clearInterval(id); }, []);
   const today = todayISO();
 
-  // "Ich" zuerst, dann alle, die gerade arbeiten, dann Rest
-  const sorted = [...activeEmployees].sort((a, b) => {
+  // Mitarbeiter sehen nur sich selbst. Admin: alle, wer gerade arbeitet zuerst
+  const visible = isAdmin ? activeEmployees : activeEmployees.filter((e) => e.id === me);
+  const sorted = [...visible].sort((a, b) => {
     const score = (e) => (e.id === me ? 0 : S.timeEntries.some((t) => t.employeeId === e.id && t.end === null) ? 1 : 2);
     return score(a) - score(b) || a.name.localeCompare(b.name);
   });
@@ -513,11 +566,12 @@ function ZeitTab({ S, me, isAdmin, empAct, activeEmployees }) {
         </div>
       )}
 
-      {sorted.length === 0 && <Empty>Noch keine Mitarbeiter angelegt.</Empty>}
+      {sorted.length === 0 && <Empty>{isAdmin ? "Noch keine Mitarbeiter angelegt." : "Dein Konto ist nicht aktiv."}</Empty>}
 
       {view === "tag" ? (
         <div className="grid sm:grid-cols-2 gap-3">
-          {sorted.map((emp) => <ClockCard key={emp.id} emp={emp} S={S} isMe={emp.id === me} empAct={empAct} today={today} />)}
+          {sorted.map((emp) => <ClockCard key={emp.id} emp={emp} S={S} isMe={!isAdmin} empAct={empAct} today={today} />)}
+          {!isAdmin && me && <MyMonthPanel S={S} me={me} />}
         </div>
       ) : (
         <div className="space-y-3">
@@ -557,6 +611,24 @@ function ZeitTab({ S, me, isAdmin, empAct, activeEmployees }) {
   );
 }
 
+function MyMonthPanel({ S, me }) {
+  const ym = todayISO().slice(0, 7);
+  const entries = S.timeEntries.filter((e) => e.employeeId === me && e.date.startsWith(ym));
+  const net = entries.reduce((s, e) => s + entryNetMs(e), 0);
+  const days = new Set(entries.map((e) => e.date)).size;
+  const planned = S.shifts.filter((s) => s.employeeId === me && s.date.startsWith(ym)).reduce((a, s) => a + shiftMs(s), 0);
+  return (
+    <Panel>
+      <h3 className="text-sm font-medium mb-2">Mein {fmtMonth(ym)}</h3>
+      <div className="grid grid-cols-3 gap-2 text-center">
+        <div className="rounded-lg py-2" style={{ background: COLORS.bg }}><div className="text-lg font-semibold tabular-nums">{fmtHours(net)}</div><div className="text-[11px]" style={{ color: COLORS.textDim }}>Std. netto</div></div>
+        <div className="rounded-lg py-2" style={{ background: COLORS.bg }}><div className="text-lg font-semibold tabular-nums">{days}</div><div className="text-[11px]" style={{ color: COLORS.textDim }}>Arbeitstage</div></div>
+        <div className="rounded-lg py-2" style={{ background: COLORS.bg }}><div className="text-lg font-semibold tabular-nums">{planned ? fmtHours(planned) : "–"}</div><div className="text-[11px]" style={{ color: COLORS.textDim }}>Std. geplant</div></div>
+      </div>
+    </Panel>
+  );
+}
+
 function ClockCard({ emp, S, isMe, empAct, today }) {
   const running = S.timeEntries.find((e) => e.employeeId === emp.id && e.end === null);
   const paused = onBreak(running);
@@ -580,7 +652,7 @@ function ClockCard({ emp, S, isMe, empAct, today }) {
     <Panel style={isMe ? { borderColor: COLORS.accent2 } : {}}>
       <div className="flex items-start justify-between mb-1 gap-2">
         <div>
-          <h3 className="font-medium">{emp.name} {isMe && <span className="text-xs" style={{ color: COLORS.accent2 }}>(ich)</span>} {emp.hasPin && <span title="PIN geschützt" className="text-xs">🔑</span>}</h3>
+          <h3 className="font-medium">{emp.name}</h3>
           <p className="text-xs flex items-center gap-1.5" style={{ color: status.color }}>
             {running && <span className={`inline-block w-2 h-2 rounded-full ${paused ? "" : "pulse"}`} style={{ background: status.color }} />}
             {status.text}
@@ -962,8 +1034,7 @@ function ChecklistenTab({ S, me, isAdmin, act, setError }) {
   const empName = (id) => (S.employees.find((e) => e.id === id) || {}).name;
 
   async function toggle(tpl, item) {
-    if (!me) { setError("Bitte oben bei „Ich bin“ deinen Namen auswählen."); return; }
-    await act("/checklists/check", { method: "POST", body: { templateId: tpl.id, item, employeeId: me, date } }).catch(() => {});
+    await act("/checklists/check", { method: "POST", body: { templateId: tpl.id, item, date } }).catch(() => {});
   }
   async function createSamples() {
     for (const c of SAMPLE_CHECKLISTS) { await act("/checklists/templates", { method: "POST", body: c }).catch(() => {}); }
@@ -1270,18 +1341,21 @@ function EntryModal({ S, act, init, onClose }) {
 
 function TeamView({ S, act, openAdmins }) {
   const [name, setName] = useState("");
+  const [pin, setPin] = useState("");
   const [edit, setEdit] = useState(null);
   async function add() {
     if (!name.trim()) return;
-    try { await act("/employees", { method: "POST", body: { name } }); setName(""); } catch (e) {}
+    try { await act("/employees", { method: "POST", body: { name, pin } }); setName(""); setPin(""); } catch (e) {}
   }
   return (
     <div>
       <Panel className="mb-4">
-        <div className="flex gap-2">
-          <TextInput value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => e.key === "Enter" && add()} placeholder="Neuer Mitarbeiter" className="flex-1" />
+        <div className="flex flex-col sm:flex-row gap-2">
+          <TextInput value={name} onChange={(e) => setName(e.target.value)} placeholder="Name neuer Mitarbeiter" className="flex-1" />
+          <div className="sm:w-40"><TextInput type="text" inputMode="numeric" autoComplete="off" value={pin} onChange={(e) => setPin(e.target.value)} onKeyDown={(e) => e.key === "Enter" && add()} placeholder="PIN (4+ Zeichen)" /></div>
           <Btn onClick={add}>+ Anlegen</Btn>
         </div>
+        <p className="text-[11px] mt-2" style={{ color: COLORS.textDim }}>Gib dem Mitarbeiter seine PIN persönlich weiter. Er meldet sich damit an, sieht nur seine eigenen Zeiten und kann die PIN selbst ändern (🔑).</p>
       </Panel>
       <div className="space-y-2 mb-4">
         {S.employees.map((e) => (
@@ -1289,7 +1363,7 @@ function TeamView({ S, act, openAdmins }) {
             <div>
               <p className="text-sm font-medium">{e.name} {!e.active && <span className="text-xs" style={{ color: COLORS.textDim }}>(inaktiv)</span>}</p>
               <p className="text-xs" style={{ color: COLORS.textDim }}>
-                {e.hasPin ? "🔑 PIN gesetzt" : "Keine PIN"}{e.weeklyHours ? ` · ${e.weeklyHours} h/Woche` : ""}
+                {e.hasPin ? "🔑 PIN gesetzt" : <span style={{ color: COLORS.warn }}>⚠ Keine PIN – kann sich nicht anmelden</span>}{e.weeklyHours ? ` · ${e.weeklyHours} h/Woche` : ""}
               </p>
             </div>
             <Btn kind="ghost" onClick={() => setEdit(e)} className="text-xs">Bearbeiten</Btn>
@@ -1312,9 +1386,6 @@ function EmployeeModal({ emp, act, onClose }) {
     if (pin) body.pin = pin;
     try { await act("/employees/" + emp.id, { method: "PATCH", body }); onClose(); } catch (e) {}
   }
-  async function removePin() {
-    try { await act("/employees/" + emp.id, { method: "PATCH", body: { pin: "" } }); onClose(); } catch (e) {}
-  }
   async function del() {
     if (!confirm(`${emp.name} endgültig löschen? Alle Zeiteinträge und Schichten werden ebenfalls gelöscht!\n\nTipp: Besser auf „inaktiv“ setzen.`)) return;
     try { await act("/employees/" + emp.id, { method: "DELETE" }); onClose(); } catch (e) {}
@@ -1324,10 +1395,9 @@ function EmployeeModal({ emp, act, onClose }) {
       <h3 className="text-sm font-medium mb-3">Mitarbeiter bearbeiten</h3>
       <Field label="Name"><TextInput value={name} onChange={(e) => setName(e.target.value)} /></Field>
       <Field label="Soll-Stunden pro Woche (optional)"><TextInput type="number" min="0" value={hours} onChange={(e) => setHours(e.target.value)} /></Field>
-      <Field label={emp.hasPin ? "Neue Stempel-PIN (leer = unverändert)" : "Stempel-PIN (optional, 4+ Zeichen)"}>
-        <TextInput type="password" inputMode="numeric" value={pin} onChange={(e) => setPin(e.target.value)} />
+      <Field label={emp.hasPin ? "Neue PIN vergeben (leer = unverändert, z. B. wenn vergessen)" : "PIN vergeben (4+ Zeichen) – nötig für die Anmeldung"}>
+        <TextInput type="text" inputMode="numeric" autoComplete="off" value={pin} onChange={(e) => setPin(e.target.value)} />
       </Field>
-      {emp.hasPin && <button onClick={removePin} className="text-xs underline mb-3" style={{ color: COLORS.textDim }}>PIN entfernen</button>}
       <label className="flex items-center gap-2 text-sm mb-4">
         <input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} /> Aktiv (erscheint in Zeiterfassung & Plan)
       </label>
@@ -1337,6 +1407,86 @@ function EmployeeModal({ emp, act, onClose }) {
         <Btn kind="ghost" onClick={onClose}>Abbrechen</Btn>
       </div>
     </Modal>
+  );
+}
+
+// =====================================================================
+// GRUPPENCHAT
+// =====================================================================
+const CHAT_READ_KEY = "team-app-chat-read";
+function chatUnread(S) {
+  let last = 0;
+  try { last = Number(localStorage.getItem(CHAT_READ_KEY) || 0); } catch (e) {}
+  return (S.messages || []).filter((m) => m.at > last && m.authorId !== S.myAuthorId).length;
+}
+
+function ChatTab({ S, isAdmin, act }) {
+  const [text, setText] = useState("");
+  const [sending, setSending] = useState(false);
+  const listRef = useRef(null);
+  const msgs = S.messages || [];
+  const lastId = msgs.length ? msgs[msgs.length - 1].id : "";
+
+  // Als gelesen markieren und nach unten scrollen, wenn neue Nachrichten kommen
+  useEffect(() => {
+    try { localStorage.setItem(CHAT_READ_KEY, String(Date.now())); } catch (e) {}
+    const el = listRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [lastId]);
+
+  async function send() {
+    const t = text.trim();
+    if (!t || sending) return;
+    setSending(true);
+    try { await act("/chat", { method: "POST", body: { text: t } }); setText(""); } catch (e) {}
+    setSending(false);
+  }
+  async function del(m) {
+    if (!confirm("Nachricht löschen?")) return;
+    await act("/chat/" + m.id, { method: "DELETE" }).catch(() => {});
+  }
+
+  let lastDate = "";
+  return (
+    <div className="flex flex-col rounded-xl overflow-hidden" style={{ background: COLORS.panel, border: `1px solid ${COLORS.panelBorder}`, height: "calc(100vh - 220px)", minHeight: 360 }}>
+      <div className="px-4 py-2.5 text-sm font-medium flex items-center justify-between" style={{ borderBottom: `1px solid ${COLORS.panelBorder}` }}>
+        <span>💬 Team-Chat</span>
+        <span className="text-xs" style={{ color: COLORS.textDim }}>{S.employees.filter((e) => e.active).length} Mitarbeiter</span>
+      </div>
+      <div ref={listRef} className="flex-1 overflow-y-auto scrollbar-thin px-3 py-3 space-y-1.5">
+        {msgs.length === 0 && <p className="text-sm text-center mt-8" style={{ color: COLORS.textDim }}>Noch keine Nachrichten. Schreib die erste! 👋</p>}
+        {msgs.map((m, i) => {
+          const mine = m.authorId === S.myAuthorId;
+          const d = localISO(new Date(m.at));
+          const showDate = d !== lastDate; lastDate = d;
+          const prev = msgs[i - 1];
+          const showName = !mine && (!prev || prev.authorId !== m.authorId || showDate);
+          return (
+            <React.Fragment key={m.id}>
+              {showDate && (
+                <div className="text-center my-2"><span className="text-[11px] px-2 py-0.5 rounded-full" style={{ background: COLORS.bg, color: COLORS.textDim }}>{d === todayISO() ? "Heute" : d === addDays(todayISO(), -1) ? "Gestern" : fmtDateShort(d)}</span></div>
+              )}
+              <div className={`flex ${mine ? "justify-end" : "justify-start"}`}>
+                <div className="max-w-[80%] px-3 py-1.5 rounded-2xl" style={{ background: mine ? COLORS.accent2 + "33" : COLORS.bg, border: `1px solid ${mine ? COLORS.accent2 + "66" : COLORS.panelBorder}`, borderBottomRightRadius: mine ? 6 : undefined, borderBottomLeftRadius: mine ? undefined : 6 }}>
+                  {showName && <div className="text-[11px] font-medium mb-0.5" style={{ color: m.isAdmin ? COLORS.accent : COLORS.accent2 }}>{m.authorName}{m.isAdmin ? " · Admin" : ""}</div>}
+                  <div className="text-sm whitespace-pre-wrap break-words">{m.text}</div>
+                  <div className="text-[10px] text-right mt-0.5 flex items-center justify-end gap-2" style={{ color: COLORS.textDim }}>
+                    {(mine || isAdmin) && <button onClick={() => del(m)} title="Löschen" className="opacity-60 hover:opacity-100">🗑</button>}
+                    {fmtClock(m.at)}
+                  </div>
+                </div>
+              </div>
+            </React.Fragment>
+          );
+        })}
+      </div>
+      <div className="flex gap-2 p-2" style={{ borderTop: `1px solid ${COLORS.panelBorder}` }}>
+        <textarea value={text} onChange={(e) => setText(e.target.value)} rows={1} placeholder="Nachricht…"
+          onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
+          className="flex-1 px-3 py-2 rounded-lg resize-none" style={{ ...inputStyle, maxHeight: 120 }} />
+        <Btn onClick={send} disabled={!text.trim() || sending} className="px-4">➤</Btn>
+      </div>
+    </div>
   );
 }
 
