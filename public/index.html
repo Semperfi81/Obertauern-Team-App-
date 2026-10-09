@@ -603,7 +603,7 @@ function ZeitTab({ S, me, isAdmin, empAct, activeEmployees }) {
     const score = (e) => (e.id === me ? 0 : S.timeEntries.some((t) => t.employeeId === e.id && t.end === null) ? 1 : 2);
     return score(a) - score(b) || a.name.localeCompare(b.name);
   });
-  const staleOpen = S.timeEntries.filter((e) => e.end === null && e.date < today);
+  const staleOpen = S.timeEntries.filter((e) => e.end === null && e.date < today && (!String(e.employeeId).startsWith("admin:") || e.employeeId === S.myAuthorId));
 
   return (
     <div>
@@ -623,7 +623,7 @@ function ZeitTab({ S, me, isAdmin, empAct, activeEmployees }) {
 
       {isAdmin && view === "tag" && S.myAuthorId && (
         <div className="mb-4">
-          <h3 className="text-xs uppercase tracking-wider mb-2 flex items-center gap-2" style={{ color: COLORS.accent }}>🔒 Meine Admin-Zeit <span className="normal-case tracking-normal" style={{ color: COLORS.textDim }}>· nur für dich sichtbar</span></h3>
+          <h3 className="text-xs uppercase tracking-wider mb-2 flex items-center gap-2" style={{ color: COLORS.accent }}>🔒 Meine Admin-Zeit <span className="normal-case tracking-normal" style={{ color: COLORS.textDim }}>· nur für Admins sichtbar, getrennt ausgewertet</span></h3>
           <div className="grid sm:grid-cols-2 gap-3">
             <ClockCard emp={{ id: S.myAuthorId, name: S.adminName }} S={S} isMe empAct={empAct} today={today} />
             <MyMonthPanel S={S} me={S.myAuthorId} />
@@ -1224,9 +1224,17 @@ function AdminTab(props) {
   const [view, setView] = useState("monat");
   return (
     <div>
-      <div className="mb-4 overflow-x-auto"><Segmented value={view} onChange={setView} options={[{ id: "monat", label: "📊 Monat" }, { id: "eintraege", label: "✎ Einträge" }, { id: "team", label: "👥 Team" }, { id: "settings", label: "⚙️ Einstellungen" }]} /></div>
-      {view === "monat" && <MonthView {...props} />}
-      {view === "eintraege" && <EntriesView {...props} />}
+      <div className="mb-4 overflow-x-auto"><Segmented value={view} onChange={setView} options={[{ id: "monat", label: "📊 Monat" }, { id: "eintraege", label: "✎ Einträge" }, { id: "adminzeit", label: "🔒 Admin-Zeiten" }, { id: "team", label: "👥 Team" }, { id: "settings", label: "⚙️ Einstellungen" }]} /></div>
+      {view === "monat" && <MonthView {...props} mode="staff" />}
+      {view === "eintraege" && <EntriesView {...props} mode="staff" />}
+      {view === "adminzeit" && (
+        <div>
+          <p className="text-xs mb-3 px-3 py-2 rounded-lg" style={{ background: COLORS.accent + "15", color: COLORS.accent }}>🔒 Admin-Zeiten – nur für Admins sichtbar und getrennt von der Mitarbeiter-Auswertung. Ändern kann jeder Admin nur seine eigenen Einträge.</p>
+          <MonthView {...props} mode="admins" />
+          <h3 className="text-sm font-medium mt-6 mb-3">Einträge</h3>
+          <EntriesView {...props} mode="admins" />
+        </div>
+      )}
       {view === "team" && <TeamView {...props} />}
       {view === "settings" && <SettingsView {...props} />}
     </div>
@@ -1251,28 +1259,30 @@ function monthStats(S, emp, ym) {
   return { entries, days: Object.keys(byDay).length, net, brk, planned, warnings };
 }
 
-function MonthView({ S }) {
+const isAdminId = (id) => String(id).startsWith("admin:");
+
+function MonthView({ S, mode = "staff" }) {
   const [ym, setYm] = useState(todayISO().slice(0, 7));
+  const admins = mode === "admins";
   const hasEntries = (id) => S.timeEntries.some((t) => t.employeeId === id && t.date.startsWith(ym));
-  const emps = [
-    ...S.employees.filter((e) => e.active || hasEntries(e.id)),
-    ...adminPersons(S).filter((a) => hasEntries(a.id)).map((a) => ({ ...a, name: a.name + " (Admin)" })),
-  ];
+  // Mitarbeiter-Auswertung ohne Admins – Admin-Zeiten werden getrennt ausgewertet
+  const emps = admins ? adminPersons(S) : S.employees.filter((e) => e.active || hasEntries(e.id));
+  const prefix = admins ? "admin-stunden" : "stunden";
   const rows = emps.map((e) => ({ e, ...monthStats(S, e, ym) }));
   const total = rows.reduce((s, r) => s + r.net, 0);
 
   function exportSummary() {
-    const out = [["Mitarbeiter", "Monat", "Arbeitstage", "Netto (Std)", "Pausen (Std)", "Geplant (Std)", "Differenz (Std)", "Hinweise"]];
+    const out = [[admins ? "Admin" : "Mitarbeiter", "Monat", "Arbeitstage", "Netto (Std)", "Pausen (Std)", "Geplant (Std)", "Differenz (Std)", "Hinweise"]];
     rows.forEach((r) => out.push([r.e.name, ym, r.days, fmtHours(r.net), fmtHours(r.brk), fmtHours(r.planned), r.planned ? fmtHours(r.net - r.planned) : "", r.warnings.join(" | ")]));
-    downloadCSV(`stunden_${ym}_zusammenfassung.csv`, out);
+    downloadCSV(`${prefix}_${ym}_zusammenfassung.csv`, out);
   }
   function exportDetail() {
-    const out = [["Mitarbeiter", "Datum", "Wochentag", "Beginn", "Ende", "Pause (Min)", "Netto (Std)", "Standort", "Notiz", "Korrigiert von"]];
-    S.timeEntries.filter((e) => e.date.startsWith(ym)).sort((a, b) => a.date.localeCompare(b.date) || a.start - b.start).forEach((e) => {
+    const out = [[admins ? "Admin" : "Mitarbeiter", "Datum", "Wochentag", "Beginn", "Ende", "Pause (Min)", "Netto (Std)", "Standort", "Notiz", "Korrigiert von"]];
+    S.timeEntries.filter((e) => e.date.startsWith(ym) && isAdminId(e.employeeId) === admins).sort((a, b) => a.date.localeCompare(b.date) || a.start - b.start).forEach((e) => {
       const emp = { name: personName(S, e.employeeId) };
       out.push([emp ? emp.name : "?", parseISO(e.date).toLocaleDateString("de-AT"), fmtDateShort(e.date).split(",")[0], fmtClock(e.start), e.end ? fmtClock(e.end) : "läuft", Math.round(entryBreakMs(e) / 60000), fmtHours(entryNetMs(e)), e.location || "", e.note || "", e.editedBy || ""]);
     });
-    downloadCSV(`stunden_${ym}_details.csv`, out);
+    downloadCSV(`${prefix}_${ym}_details.csv`, out);
   }
 
   return (
@@ -1326,12 +1336,15 @@ function MonthView({ S }) {
   );
 }
 
-function EntriesView({ S, act }) {
-  const [empId, setEmpId] = useState((S.employees[0] || {}).id || "");
+function EntriesView({ S, act, mode = "staff" }) {
+  const admins = mode === "admins";
+  const people = admins ? adminPersons(S) : S.employees;
+  const [empId, setEmpId] = useState(admins ? S.myAuthorId : (S.employees[0] || {}).id || "");
   const [ym, setYm] = useState(todayISO().slice(0, 7));
   const [edit, setEdit] = useState(null);
+  const canEdit = (id) => !isAdminId(id) || id === S.myAuthorId; // fremde Admin-Zeiten nur ansehen
   const entries = S.timeEntries.filter((e) => e.employeeId === empId && e.date.startsWith(ym)).sort((a, b) => b.date.localeCompare(a.date) || b.start - a.start);
-  const openOld = S.timeEntries.filter((e) => e.end === null && e.date < todayISO());
+  const openOld = S.timeEntries.filter((e) => e.end === null && e.date < todayISO() && (admins ? e.employeeId === S.myAuthorId : !isAdminId(e.employeeId)));
   return (
     <div>
       {openOld.length > 0 && (
@@ -1345,14 +1358,15 @@ function EntriesView({ S, act }) {
         </Panel>
       )}
       <div className="flex gap-2 mb-4 flex-wrap">
-        <div className="w-44"><Select value={empId} onChange={setEmpId}>{S.employees.map((e) => <option key={e.id} value={e.id}>{e.name}{e.active ? "" : " (inaktiv)"}</option>)}{adminPersons(S).length > 0 && <optgroup label="Meine Admin-Zeit (nur für dich)">{adminPersons(S).map((a) => <option key={a.id} value={a.id}>🔒 {a.name}</option>)}</optgroup>}</Select></div>
+        <div className="w-44"><Select value={empId} onChange={setEmpId}>{people.map((e) => <option key={e.id} value={e.id}>{admins ? "🔒 " : ""}{e.name}{e.active === false ? " (inaktiv)" : ""}{admins && e.id === S.myAuthorId ? " (ich)" : ""}</option>)}</Select></div>
         <div className="w-44"><TextInput type="month" value={ym} onChange={(e) => e.target.value && setYm(e.target.value)} /></div>
-        <Btn onClick={() => setEdit({ employeeId: empId })} disabled={!empId}>+ Eintrag nachtragen</Btn>
+        <Btn onClick={() => setEdit({ employeeId: empId })} disabled={!empId || !canEdit(empId)}>+ Eintrag nachtragen</Btn>
       </div>
       <div className="space-y-1.5">
         {entries.length === 0 && <Empty>Keine Einträge in diesem Monat.</Empty>}
+        {admins && empId !== S.myAuthorId && entries.length > 0 && <p className="text-[11px]" style={{ color: COLORS.textDim }}>Nur ansehen – ändern kann nur der jeweilige Admin selbst.</p>}
         {entries.map((e) => (
-          <button key={e.id} onClick={() => setEdit({ entry: e })} className="w-full flex items-center justify-between gap-2 px-3 py-2 rounded-lg text-sm text-left" style={{ background: COLORS.panel, border: `1px solid ${COLORS.panelBorder}` }}>
+          <button key={e.id} onClick={() => canEdit(e.employeeId) && setEdit({ entry: e })} className="w-full flex items-center justify-between gap-2 px-3 py-2 rounded-lg text-sm text-left" style={{ background: COLORS.panel, border: `1px solid ${COLORS.panelBorder}`, cursor: canEdit(e.employeeId) ? "pointer" : "default" }}>
             <span className="flex items-center gap-2 flex-wrap">
               <span className="w-20" style={{ color: COLORS.textDim }}>{fmtDateShort(e.date)}</span>
               <span className="tabular-nums">{fmtClock(e.start)}–{e.end ? fmtClock(e.end) : "läuft"}</span>
