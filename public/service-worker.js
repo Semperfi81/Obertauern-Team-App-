@@ -1,5 +1,5 @@
 // Team-App Service Worker – bei Änderungen am Frontend Versionsnummer erhöhen
-const CACHE_NAME = "team-app-v5";
+const CACHE_NAME = "team-app-v6";
 const PRECACHE = ["/", "/manifest.json", "/icon-192.png", "/icon-512.png"];
 
 self.addEventListener("install", (event) => {
@@ -43,6 +43,10 @@ self.addEventListener("push", (event) => {
       badge: "/icon-192.png",
       tag: d.tag || undefined,
       renotify: !!d.tag,
+      // Erinnerungen: bleiben sichtbar und vibrieren deutlich
+      requireInteraction: !!d.alarm,
+      vibrate: d.alarm ? [400, 150, 400, 150, 400] : [200],
+      silent: false,
       data: { url: d.url || "/" },
     })
   );

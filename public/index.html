@@ -427,6 +427,7 @@ function App() {
         ))}
       </nav>
 
+      <ReminderAlarm S={S} />
       {authView === "manage" && <AdminManageModal token={token} onClose={() => setAuthView(null)} />}
       {authView === "pin" && <ChangePinModal token={token} onClose={() => setAuthView(null)} />}
     </div>
@@ -786,6 +787,7 @@ function SchichtTab({ S, me, isAdmin, act, activeEmployees }) {
   const [monday, setMonday] = useState(mondayOf(todayISO()));
   const [onlyMine, setOnlyMine] = useState(false);
   const [edit, setEdit] = useState(null); // {shift} oder {date}
+  const [absModal, setAbsModal] = useState(null);
   const days = weekDays(monday);
   const today = todayISO();
   const empName = (id) => (S.employees.find((e) => e.id === id) || {}).name || "?";
@@ -810,9 +812,12 @@ function SchichtTab({ S, me, isAdmin, act, activeEmployees }) {
         </div>
       </div>
 
+      <AbsencePanel S={S} me={me} isAdmin={isAdmin} act={act} setModal={setAbsModal} />
+
       <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
         {days.map((d) => {
           const list = weekShifts.filter((s) => s.date === d).sort((a, b) => a.start.localeCompare(b.start));
+          const absList = (S.absences || []).filter((a) => absCovers(a, d) && a.status !== "abgelehnt" && (!onlyMine || a.employeeId === me));
           return (
             <Panel key={d} className="p-3" style={d === today ? { borderColor: COLORS.accent } : {}}>
               <div className="flex items-center justify-between mb-2">
@@ -820,7 +825,13 @@ function SchichtTab({ S, me, isAdmin, act, activeEmployees }) {
                 {isAdmin && <button onClick={() => setEdit({ date: d })} className="w-7 h-7 rounded-md text-sm" style={{ border: `1px dashed ${COLORS.panelBorder}`, color: COLORS.textDim }}>+</button>}
               </div>
               <div className="space-y-1.5">
-                {list.length === 0 && <p className="text-xs" style={{ color: COLORS.textDim }}>–</p>}
+                {absList.map((a) => (
+                  <div key={a.id} className="px-2.5 py-1 rounded-lg text-xs flex justify-between gap-2" style={{ background: ABS[a.type].color + "1f", color: ABS[a.type].color }}>
+                    <span>{ABS[a.type].icon} {empName(a.employeeId)}</span>
+                    <span>{ABS[a.type].label}{a.status === "offen" ? " (beantragt)" : ""}</span>
+                  </div>
+                ))}
+                {list.length === 0 && absList.length === 0 && <p className="text-xs" style={{ color: COLORS.textDim }}>–</p>}
                 {list.map((s) => (
                   <button key={s.id} onClick={() => isAdmin && setEdit({ shift: s })} className="w-full text-left px-2.5 py-1.5 rounded-lg text-xs"
                     style={{ background: COLORS.bg, borderLeft: `3px solid ${locColor(s.location)}`, cursor: isAdmin ? "pointer" : "default", outline: s.employeeId === me ? `1px solid ${COLORS.accent2}` : "none" }}>
@@ -848,6 +859,115 @@ function SchichtTab({ S, me, isAdmin, act, activeEmployees }) {
       )}
 
       {edit && <ShiftModal S={S} act={act} init={edit} onClose={() => setEdit(null)} activeEmployees={activeEmployees} />}
+      {absModal && <AbsenceModal S={S} isAdmin={isAdmin} act={act} initType={absModal.type} onClose={() => setAbsModal(null)} />}
+    </div>
+  );
+}
+
+// =====================================================================
+// URLAUB & KRANKMELDUNG
+// =====================================================================
+const ABS = {
+  urlaub: { icon: "🏖", label: "Urlaub", color: "#6FA8DC" },
+  krank: { icon: "🤒", label: "Krank", color: "#D5694B" },
+  sonstiges: { icon: "📌", label: "Abwesend", color: "#B48EDB" },
+  abwesend: { icon: "🚫", label: "Abwesend", color: "#8C919E" },
+};
+const ABS_STATUS = { offen: "beantragt", genehmigt: "genehmigt", abgelehnt: "abgelehnt" };
+const absCovers = (a, d) => a.from <= d && a.to >= d;
+// Abwesenheitstage innerhalb eines Monats (Kalendertage, nur genehmigt)
+function absDaysInMonth(S, empId, ym, type) {
+  const days = monthDays(ym);
+  return days.filter((d) => (S.absences || []).some((a) => a.employeeId === empId && a.type === type && a.status === "genehmigt" && absCovers(a, d))).length;
+}
+function fmtRange(a) { return a.from === a.to ? fmtDateShort(a.from) : `${fmtDateShort(a.from)} – ${fmtDateShort(a.to)}`; }
+
+function AbsenceModal({ S, isAdmin, act, onClose, initType }) {
+  const [f, setF] = useState({ type: initType || "urlaub", from: todayISO(), to: todayISO(), note: "", employeeId: isAdmin ? ((S.employees.find((e) => e.active) || {}).id || "") : "" });
+  const [err, setErr] = useState("");
+  const set = (k) => (v) => setF((p) => ({ ...p, [k]: v && v.target ? v.target.value : v }));
+  async function save() {
+    setErr("");
+    if (f.to < f.from) { setErr("Ende muss nach dem Beginn liegen."); return; }
+    try { await api("/absences", { method: "POST", token: store.get(TOKEN_KEY), body: f }); await act("/state").catch(() => {}); onClose(); }
+    catch (e) { setErr(e.message); }
+  }
+  const title = isAdmin ? "Abwesenheit eintragen" : f.type === "krank" ? "🤒 Krank melden" : f.type === "urlaub" ? "🏖 Urlaub beantragen" : "📌 Abwesenheit melden";
+  return (
+    <Modal onClose={onClose}>
+      <h3 className="text-sm font-medium mb-3">{title}</h3>
+      {isAdmin && (
+        <Field label="Mitarbeiter"><Select value={f.employeeId} onChange={set("employeeId")}>{S.employees.filter((e) => e.active).map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}</Select></Field>
+      )}
+      <Field label="Art">
+        <Select value={f.type} onChange={set("type")}><option value="urlaub">🏖 Urlaub</option><option value="krank">🤒 Krank</option><option value="sonstiges">📌 Sonstiges (z. B. Arzt, Schule)</option></Select>
+      </Field>
+      <div className="grid grid-cols-2 gap-2">
+        <Field label="Von"><TextInput type="date" value={f.from} onChange={(e) => setF((p) => ({ ...p, from: e.target.value, to: p.to < e.target.value ? e.target.value : p.to }))} /></Field>
+        <Field label="Bis"><TextInput type="date" value={f.to} onChange={set("to")} /></Field>
+      </div>
+      <Field label="Notiz (optional)"><TextInput value={f.note} onChange={set("note")} placeholder={f.type === "krank" ? "z. B. voraussichtlich bis Freitag" : "optional"} /></Field>
+      {!isAdmin && <p className="text-[11px] mb-3" style={{ color: COLORS.textDim }}>{f.type === "krank" ? "Die Krankmeldung gilt sofort, die Admins werden benachrichtigt. Kollegen sehen nur „abwesend“." : "Der Antrag geht an die Admins zur Freigabe. Du bekommst Bescheid, sobald er bearbeitet wurde."}</p>}
+      {err && <p className="text-xs mb-2" style={{ color: COLORS.danger }}>{err}</p>}
+      <div className="flex gap-2">
+        <Btn onClick={save} className="flex-1">{isAdmin ? "Eintragen" : f.type === "urlaub" ? "Beantragen" : "Melden"}</Btn>
+        <Btn kind="ghost" onClick={onClose}>Abbrechen</Btn>
+      </div>
+    </Modal>
+  );
+}
+
+function AbsencePanel({ S, me, isAdmin, act, setModal }) {
+  const name = (id) => (S.employees.find((e) => e.id === id) || {}).name || "?";
+  const all = S.absences || [];
+  const pending = all.filter((a) => a.status === "offen").sort((a, b) => a.from.localeCompare(b.from));
+  const mine = all.filter((a) => a.employeeId === me && a.to >= addDays(todayISO(), -30)).sort((a, b) => b.from.localeCompare(a.from));
+  async function decide(a, status) { await act("/absences/" + a.id, { method: "PATCH", body: { status } }).catch(() => {}); }
+  async function remove(a) { if (confirm("Eintrag löschen / Antrag zurückziehen?")) await act("/absences/" + a.id, { method: "DELETE" }).catch(() => {}); }
+  return (
+    <div className="mb-4 space-y-3">
+      <div className="flex gap-2 flex-wrap">
+        {isAdmin ? (
+          <Btn kind="ghost" onClick={() => setModal({ type: "urlaub" })} className="text-xs">+ Urlaub / Krankheit eintragen</Btn>
+        ) : (
+          <>
+            <Btn kind="ghost" onClick={() => setModal({ type: "urlaub" })} className="text-xs">🏖 Urlaub beantragen</Btn>
+            <Btn kind="ghost" onClick={() => setModal({ type: "krank" })} className="text-xs">🤒 Krank melden</Btn>
+          </>
+        )}
+      </div>
+      {isAdmin && pending.length > 0 && (
+        <Panel style={{ borderColor: COLORS.accent }}>
+          <h4 className="text-sm font-medium mb-2">📥 Offene Anträge ({pending.length})</h4>
+          <div className="space-y-1.5">
+            {pending.map((a) => (
+              <div key={a.id} className="flex items-center justify-between gap-2 text-sm px-2.5 py-2 rounded-lg" style={{ background: COLORS.bg }}>
+                <span>{ABS[a.type].icon} <b>{name(a.employeeId)}</b> · {fmtRange(a)}{a.note ? <span style={{ color: COLORS.textDim }}> · {a.note}</span> : null}</span>
+                <span className="flex gap-1.5 flex-shrink-0">
+                  <Btn kind="go" onClick={() => decide(a, "genehmigt")} className="text-xs px-2.5 py-1">✓</Btn>
+                  <Btn kind="danger" onClick={() => decide(a, "abgelehnt")} className="text-xs px-2.5 py-1">✕</Btn>
+                </span>
+              </div>
+            ))}
+          </div>
+        </Panel>
+      )}
+      {!isAdmin && mine.length > 0 && (
+        <Panel>
+          <h4 className="text-sm font-medium mb-2">Meine Abwesenheiten</h4>
+          <div className="space-y-1.5">
+            {mine.map((a) => (
+              <div key={a.id} className="flex items-center justify-between gap-2 text-xs px-2.5 py-2 rounded-lg" style={{ background: COLORS.bg }}>
+                <span>{ABS[a.type].icon} {ABS[a.type].label} · {fmtRange(a)}</span>
+                <span className="flex items-center gap-2">
+                  <span style={{ color: a.status === "genehmigt" ? COLORS.accent2 : a.status === "abgelehnt" ? COLORS.danger : COLORS.warn }}>{a.type === "krank" && a.status === "genehmigt" ? "gemeldet" : ABS_STATUS[a.status]}</span>
+                  {(a.status === "offen" || a.type === "krank") && <button onClick={() => remove(a)} style={{ color: COLORS.textDim }}>🗑</button>}
+                </span>
+              </div>
+            ))}
+          </div>
+        </Panel>
+      )}
     </div>
   );
 }
@@ -910,11 +1030,14 @@ const WORKFLOW_COLS = [
 const PRIO = { hoch: { label: "Hoch", color: "#D5694B" }, normal: { label: "Normal", color: "#8C919E" }, niedrig: { label: "Niedrig", color: "#4DA8A0" } };
 
 function AufgabenTab(props) {
-  const [view, setView] = useState("board");
+  const [view, setView] = useState(() => (new URLSearchParams(location.search).get("reminder") ? "reminders" : "board"));
+  const upcoming = (props.S.reminders || []).filter((r) => r.active && isMyReminder(props.S, r)).length;
   return (
     <div>
-      <div className="mb-4"><Segmented value={view} onChange={setView} options={[{ id: "board", label: "📋 Board" }, { id: "todos", label: "✅ To-Dos" }]} /></div>
-      {view === "board" ? <BoardView {...props} /> : <TodosView {...props} />}
+      <div className="mb-4 overflow-x-auto"><Segmented value={view} onChange={setView} options={[{ id: "board", label: "📋 Board" }, { id: "todos", label: "✅ To-Dos" }, { id: "reminders", label: `⏰ Erinnerungen${upcoming ? " (" + upcoming + ")" : ""}` }]} /></div>
+      {view === "board" && <BoardView {...props} />}
+      {view === "todos" && <TodosView {...props} />}
+      {view === "reminders" && <RemindersView {...props} />}
     </div>
   );
 }
@@ -1008,6 +1131,7 @@ function TaskModal({ S, act, isAdmin, me, task: initialTask, onClose }) {
   const [pending, setPending] = useState([]);
   const [uploading, setUploading] = useState(false);
   const [viewer, setViewer] = useState(null);
+  const [remind, setRemind] = useState(false);
   async function addPhotos(urls) {
     if (!task) { setPending([...pending, ...urls].slice(0, 20)); return; }
     setUploading(true);
@@ -1096,8 +1220,18 @@ function TaskModal({ S, act, isAdmin, me, task: initialTask, onClose }) {
         {task && isAdmin && <Btn kind="ghost" onClick={del}>🗑</Btn>}
         <Btn kind="ghost" onClick={onClose}>Abbrechen</Btn>
       </div>
+      {task && (
+        <div className="mt-3 pt-3" style={{ borderTop: `1px solid ${COLORS.panelBorder}` }}>
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-xs" style={{ color: COLORS.textDim }}>⏰ {(S.reminders || []).filter((r) => r.taskId === task.id && r.active).map((r) => fmtWhen(r.nextAt)).join(", ") || "Keine Erinnerung"}</span>
+            <Btn kind="ghost" className="text-xs" onClick={() => setRemind(true)}>⏰ Erinnerung setzen</Btn>
+          </div>
+        </div>
+      )}
       {task && task.doneAt && <p className="text-[11px] mt-2" style={{ color: COLORS.textDim }}>Erledigt am {new Date(task.doneAt).toLocaleString("de-AT")}</p>}
       {viewer && <PhotoViewer url={viewer} onClose={() => setViewer(null)} />}
+      {remind && task && <ReminderModal S={S} isAdmin={isAdmin} act={act} onClose={() => setRemind(false)}
+        init={{ text: task.title, taskId: task.id, date: task.due && task.due >= todayISO() ? task.due : undefined, time: task.due ? "08:00" : undefined, target: isAdmin ? task.employeeId || "all" : "self" }} />}
     </Modal>
   );
 }
@@ -1161,7 +1295,39 @@ const SAMPLE_CHECKLISTS = [
   { name: "Alpine Mini Market schließen", area: "Alpine Mini Market", items: ["Kühlregale kontrollieren", "Ware nachfüllen / Bestellung notieren", "Kassenabschluss", "Licht aus & abschließen"] },
 ];
 
+function ChecklistItemRow({ tpl, item, c, date, act, onToggle, onView, empName }) {
+  const cam = useRef(null);
+  const [busy, setBusy] = useState(false);
+  async function onFile(e) {
+    const f = e.target.files && e.target.files[0];
+    e.target.value = "";
+    if (!f) return;
+    setBusy(true);
+    try { const dataUrl = await compressImage(f); await act("/checklists/photo", { method: "POST", body: { templateId: tpl.id, item, date, dataUrl } }); }
+    catch (err) {} finally { setBusy(false); }
+  }
+  return (
+    <div className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg" style={{ background: COLORS.bg }}>
+      <button onClick={onToggle} className="flex-1 flex items-center gap-2.5 py-0.5 text-left min-w-0">
+        <span className="w-5 h-5 rounded-md flex items-center justify-center flex-shrink-0 text-[11px]"
+          style={{ border: `1.5px solid ${c ? COLORS.accent2 : COLORS.panelBorder}`, background: c ? COLORS.accent2 : "transparent", color: "#0E1411" }}>{c ? "✓" : ""}</span>
+        <span className="flex-1 text-sm" style={{ color: c ? COLORS.textDim : COLORS.text }}>{item}</span>
+        {c && <span className="text-[10px] text-right flex-shrink-0" style={{ color: COLORS.textDim }}>{c.byName || empName(c.by)}<br />{fmtClock(c.at)}</span>}
+      </button>
+      {c && c.photo ? (
+        <Photo id={c.photo} className="w-10 h-10 flex-shrink-0" onClick={onView} />
+      ) : (
+        <>
+          <input ref={cam} type="file" accept="image/*" capture="environment" className="hidden" onChange={onFile} />
+          <button onClick={() => cam.current.click()} disabled={busy} title="Foto als Nachweis" className="w-9 h-9 rounded-lg flex-shrink-0 text-sm" style={{ border: `1px solid ${COLORS.panelBorder}`, color: COLORS.textDim }}>{busy ? "…" : "📷"}</button>
+        </>
+      )}
+    </div>
+  );
+}
+
 function ChecklistenTab({ S, me, isAdmin, act, setError }) {
+  const [viewer, setViewer] = useState(null);
   const today = todayISO();
   const [date, setDate] = useState(today);
   const [open, setOpen] = useState({});
@@ -1228,17 +1394,9 @@ function ChecklistenTab({ S, me, isAdmin, act, setError }) {
                   </div>
                   {isOpen && (
                     <div className="mt-3 space-y-1">
-                      {tpl.items.map((item) => {
-                        const c = checks[item];
-                        return (
-                          <button key={item} onClick={() => toggle(tpl, item)} className="w-full flex items-center gap-2.5 px-2 py-2 rounded-lg text-left" style={{ background: COLORS.bg }}>
-                            <span className="w-5 h-5 rounded-md flex items-center justify-center flex-shrink-0 text-[11px]"
-                              style={{ border: `1.5px solid ${c ? COLORS.accent2 : COLORS.panelBorder}`, background: c ? COLORS.accent2 : "transparent", color: "#0E1411" }}>{c ? "✓" : ""}</span>
-                            <span className="flex-1 text-sm" style={{ color: c ? COLORS.textDim : COLORS.text }}>{item}</span>
-                            {c && <span className="text-[10px] text-right" style={{ color: COLORS.textDim }}>{c.byName || empName(c.by)}<br />{fmtClock(c.at)}</span>}
-                          </button>
-                        );
-                      })}
+                      {tpl.items.map((item) => (
+                        <ChecklistItemRow key={item} tpl={tpl} item={item} c={checks[item]} date={date} act={act} onToggle={() => toggle(tpl, item)} onView={setViewer} empName={empName} />
+                      ))}
                     </div>
                   )}
                 </Panel>
@@ -1248,6 +1406,7 @@ function ChecklistenTab({ S, me, isAdmin, act, setError }) {
         </div>
       ))}
       {edit && <TemplateModal S={S} act={act} tpl={edit.tpl} onClose={() => setEdit(null)} />}
+      {viewer && <PhotoViewer url={viewer} onClose={() => setViewer(null)} />}
     </div>
   );
 }
@@ -1319,7 +1478,8 @@ function monthStats(S, emp, ym) {
     if (x.net > 10 * 3600000) warnings.push(`${fmtDateShort(d)}: über 10 h`);
   });
   entries.filter((e) => e.end === null && e.date < todayISO()).forEach((e) => warnings.push(`${fmtDateShort(e.date)}: nicht ausgestempelt`));
-  return { entries, days: Object.keys(byDay).length, net, brk, lunch, planned, warnings };
+  const urlaub = absDaysInMonth(S, emp.id, ym, "urlaub"), krank = absDaysInMonth(S, emp.id, ym, "krank");
+  return { entries, days: Object.keys(byDay).length, net, brk, lunch, planned, warnings, urlaub, krank };
 }
 
 const isAdminId = (id) => String(id).startsWith("admin:");
@@ -1335,8 +1495,8 @@ function MonthView({ S, mode = "staff" }) {
   const total = rows.reduce((s, r) => s + r.net, 0);
 
   function exportSummary() {
-    const out = [[admins ? "Admin" : "Mitarbeiter", "Monat", "Arbeitstage", "Netto (Std)", "Pausen gestempelt (Std)", ...(admins ? [] : ["Mittagspause automatisch (Std)"]), "Geplant (Std)", "Differenz (Std)", "Hinweise"]];
-    rows.forEach((r) => out.push([r.e.name, ym, r.days, fmtHours(r.net), fmtHours(r.brk), ...(admins ? [] : [fmtHours(r.lunch)]), fmtHours(r.planned), r.planned ? fmtHours(r.net - r.planned) : "", r.warnings.join(" | ")]));
+    const out = [[admins ? "Admin" : "Mitarbeiter", "Monat", "Arbeitstage", "Netto (Std)", "Pausen gestempelt (Std)", ...(admins ? [] : ["Mittagspause automatisch (Std)", "Urlaubstage", "Krankentage"]), "Geplant (Std)", "Differenz (Std)", "Hinweise"]];
+    rows.forEach((r) => out.push([r.e.name, ym, r.days, fmtHours(r.net), fmtHours(r.brk), ...(admins ? [] : [fmtHours(r.lunch), r.urlaub, r.krank]), fmtHours(r.planned), r.planned ? fmtHours(r.net - r.planned) : "", r.warnings.join(" | ")]));
     downloadCSV(`${prefix}_${ym}_zusammenfassung.csv`, out);
   }
   function exportDetail() {
@@ -1378,7 +1538,8 @@ function MonthView({ S, mode = "staff" }) {
               return (
                 <React.Fragment key={r.e.id}>
                   <tr style={{ borderTop: `1px solid ${COLORS.panelBorder}` }}>
-                    <td className="p-3">{r.e.name}{r.warnings.length > 0 && <span title={r.warnings.join("\n")} style={{ color: COLORS.warn }}> ⚠</span>}</td>
+                    <td className="p-3">{r.e.name}{r.warnings.length > 0 && <span title={r.warnings.join("\n")} style={{ color: COLORS.warn }}> ⚠</span>}
+                      {(r.urlaub > 0 || r.krank > 0) && <div className="text-[11px]" style={{ color: COLORS.textDim }}>{r.urlaub > 0 && `🏖 ${r.urlaub} T. `}{r.krank > 0 && `🤒 ${r.krank} T.`}</div>}</td>
                     <td className="p-3 text-right tabular-nums">{r.days}</td>
                     <td className="p-3 text-right tabular-nums font-medium">{fmtHours(r.net)}</td>
                     <td className="p-3 text-right tabular-nums hidden sm:table-cell" style={{ color: COLORS.textDim }}>{fmtHours(r.brk)}</td>
@@ -1568,10 +1729,11 @@ function SettingsView({ S, act }) {
   const [locs, setLocs] = useState((S.locations || []).join("\n"));
   const [areas, setAreas] = useState((S.areas || []).join("\n"));
   const [lunch, setLunch] = useState(() => ({ enabled: true, minutes: 60, minHours: 6, ...(S.lunch || {}) }));
+  const [clockout, setClockout] = useState(() => ({ enabled: true, time: "20:00", ...(S.clockout || {}) }));
   const [msg, setMsg] = useState("");
   async function save() {
     setMsg("");
-    try { await act("/settings", { method: "PUT", body: { locations: locs, areas, lunch } }); setMsg("Gespeichert ✓"); } catch (e) {}
+    try { await act("/settings", { method: "PUT", body: { locations: locs, areas, lunch, clockout } }); setMsg("Gespeichert ✓"); } catch (e) {}
   }
   return (
     <div className="grid sm:grid-cols-2 gap-3">
@@ -1594,6 +1756,14 @@ function SettingsView({ S, act }) {
         <div className="grid grid-cols-2 gap-2 max-w-sm">
           <Field label="Dauer (Minuten)"><TextInput type="number" min="0" max="180" value={lunch.minutes} onChange={(e) => setLunch({ ...lunch, minutes: e.target.value })} /></Field>
           <Field label="ab Arbeitszeit (Stunden)"><TextInput type="number" min="0" max="16" step="0.5" value={lunch.minHours} onChange={(e) => setLunch({ ...lunch, minHours: e.target.value })} /></Field>
+        </div>
+      </Panel>
+      <Panel className="sm:col-span-2">
+        <h3 className="text-sm font-medium mb-1">🕒 Erinnerung „Noch eingestempelt?“</h3>
+        <p className="text-xs mb-3" style={{ color: COLORS.textDim }}>Wer zu dieser Uhrzeit noch eingestempelt ist, bekommt automatisch eine Benachrichtigung mit Ton. Admins bekommen eine Liste aller, die noch eingestempelt sind.</p>
+        <div className="flex items-center gap-3 flex-wrap">
+          <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={!!clockout.enabled} onChange={(e) => setClockout({ ...clockout, enabled: e.target.checked })} /> Aktiv, täglich um</label>
+          <div className="w-32"><TextInput type="time" value={clockout.time} onChange={(e) => setClockout({ ...clockout, time: e.target.value })} /></div>
         </div>
       </Panel>
       <div className="sm:col-span-2 flex items-center gap-3">
@@ -1725,6 +1895,192 @@ function PhotoPickButtons({ onPick, disabled, compact }) {
       <Btn kind="ghost" disabled={disabled || busy} onClick={() => gal.current.click()} className={compact ? "px-2.5" : "text-xs"} title="Aus Galerie wählen">🖼{compact ? "" : " Galerie"}</Btn>
       {busy && <span className="text-xs self-center" style={{ color: COLORS.textDim }}>…</span>}
     </span>
+  );
+}
+
+// =====================================================================
+// ERINNERUNGEN
+// =====================================================================
+const REPEAT_LABEL = { none: "einmalig", daily: "täglich", weekdays: "Mo–Fr", weekly: "wöchentlich" };
+let audioCtx = null;
+// Audio muss nach einer Berührung freigeschaltet werden (Browser-Regel)
+if (typeof window !== "undefined") {
+  const unlock = () => { try { audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)(); if (audioCtx.state === "suspended") audioCtx.resume(); } catch (e) {} };
+  window.addEventListener("pointerdown", unlock, { passive: true });
+  window.addEventListener("keydown", unlock);
+}
+function playAlarm(times = 3) {
+  try {
+    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    const t0 = audioCtx.currentTime + 0.05;
+    for (let i = 0; i < times; i++) {
+      [880, 1175].forEach((f, j) => {
+        const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+        o.type = "sine"; o.frequency.value = f;
+        const st = t0 + i * 0.7 + j * 0.18;
+        g.gain.setValueAtTime(0.0001, st); g.gain.exponentialRampToValueAtTime(0.4, st + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, st + 0.16);
+        o.connect(g).connect(audioCtx.destination); o.start(st); o.stop(st + 0.18);
+      });
+    }
+  } catch (e) {}
+  try { navigator.vibrate && navigator.vibrate([400, 150, 400, 150, 400]); } catch (e) {}
+}
+function isMyReminder(S, r) {
+  if (r.target === "all") return true;
+  if (r.target === "self") return r.createdBy === S.myAuthorId;
+  return r.target === S.myAuthorId;
+}
+function reminderTargetLabel(S, r) {
+  if (r.target === "self") return r.createdBy === S.myAuthorId ? "für mich" : "für " + r.createdByName;
+  if (r.target === "all") return "für alle";
+  return "für " + ((S.employees.find((e) => e.id === r.target) || {}).name || "?");
+}
+function fmtWhen(ms) {
+  if (!ms) return "–";
+  const d = new Date(ms), iso = localISO(d);
+  const day = iso === todayISO() ? "Heute" : iso === addDays(todayISO(), 1) ? "Morgen" : fmtDateShort(iso);
+  return `${day}, ${hmOf(ms)}`;
+}
+
+// Zeigt fällige Erinnerungen in der offenen App mit Signalton an
+function ReminderAlarm({ S }) {
+  const [current, setCurrent] = useState(null);
+  useEffect(() => {
+    if (current) return;
+    let seen = {};
+    try { seen = JSON.parse(localStorage.getItem("team-app-rem-seen") || "{}"); } catch (e) {}
+    const due = (S.reminders || []).find((r) => r.lastFiredAt && Date.now() - r.lastFiredAt < 15 * 60000 && isMyReminder(S, r) && seen[r.id] !== r.lastFiredAt);
+    if (due) { setCurrent(due); playAlarm(); }
+  }, [S.reminders, current]);
+  if (!current) return null;
+  function ok() {
+    try {
+      const seen = JSON.parse(localStorage.getItem("team-app-rem-seen") || "{}");
+      seen[current.id] = current.lastFiredAt;
+      Object.keys(seen).forEach((k) => { if (Date.now() - seen[k] > 2 * 864e5) delete seen[k]; });
+      localStorage.setItem("team-app-rem-seen", JSON.stringify(seen));
+    } catch (e) {}
+    setCurrent(null);
+  }
+  const task = current.taskId ? S.tasks.find((t) => t.id === current.taskId) : null;
+  return (
+    <div className="fixed inset-0 z-[70] flex items-center justify-center px-4" style={{ background: "rgba(0,0,0,0.75)" }}>
+      <div className="w-full max-w-sm rounded-2xl p-5 text-center" style={{ background: COLORS.panel, border: `2px solid ${COLORS.accent}` }}>
+        <div className="text-5xl mb-2">⏰</div>
+        <h3 className="text-lg font-semibold mb-1">Erinnerung</h3>
+        <p className="text-base mb-1">{current.text}</p>
+        {task && <p className="text-sm mb-1" style={{ color: COLORS.textDim }}>📋 {task.title}</p>}
+        <p className="text-xs mb-4" style={{ color: COLORS.textDim }}>{reminderTargetLabel(S, current)} · von {current.createdByName}</p>
+        <div className="flex gap-2">
+          <Btn kind="ghost" onClick={() => playAlarm(1)} className="px-3">🔔</Btn>
+          <Btn onClick={ok} className="flex-1 py-3">OK, erledigt</Btn>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function RemindersView({ S, isAdmin, act }) {
+  const [edit, setEdit] = useState(null);
+  const list = [...(S.reminders || [])];
+  const active = list.filter((r) => r.active).sort((a, b) => a.nextAt - b.nextAt);
+  const past = list.filter((r) => !r.active).sort((a, b) => (b.lastFiredAt || 0) - (a.lastFiredAt || 0)).slice(0, 20);
+  const canEdit = (r) => isAdmin || r.createdBy === S.myAuthorId;
+  const Row = ({ r }) => {
+    const task = r.taskId ? S.tasks.find((t) => t.id === r.taskId) : null;
+    return (
+      <button onClick={() => canEdit(r) && setEdit({ reminder: r })} className="w-full text-left px-3 py-2.5 rounded-lg flex items-center justify-between gap-3" style={{ background: COLORS.panel, border: `1px solid ${COLORS.panelBorder}`, opacity: r.active ? 1 : 0.55 }}>
+        <span className="min-w-0">
+          <span className="block text-sm truncate">{r.text}</span>
+          <span className="block text-[11px]" style={{ color: COLORS.textDim }}>
+            {reminderTargetLabel(S, r)} · {REPEAT_LABEL[r.repeat] || "einmalig"}{task ? ` · 📋 ${task.title}` : ""}{r.createdBy !== S.myAuthorId ? ` · von ${r.createdByName}` : ""}
+          </span>
+        </span>
+        <span className="text-xs text-right flex-shrink-0 tabular-nums" style={{ color: r.active ? COLORS.accent : COLORS.textDim }}>{r.active ? "⏰ " + fmtWhen(r.nextAt) : "✓ " + fmtWhen(r.lastFiredAt)}</span>
+      </button>
+    );
+  };
+  return (
+    <div>
+      <div className="flex items-center gap-2 mb-3 flex-wrap">
+        <Btn onClick={() => setEdit({})}>+ Neue Erinnerung</Btn>
+        <Btn kind="ghost" onClick={() => playAlarm(1)} className="text-xs">🔔 Ton testen</Btn>
+      </div>
+      <p className="text-[11px] mb-3" style={{ color: COLORS.textDim }}>Zur eingestellten Zeit kommt eine Benachrichtigung mit Ton aufs Handy (Benachrichtigungen müssen aktiviert sein). Ist die App offen, erscheint zusätzlich ein Hinweis mit Signalton.</p>
+      <div className="space-y-1.5 mb-5">
+        {active.length === 0 && <Empty>Keine anstehenden Erinnerungen.</Empty>}
+        {active.map((r) => <Row key={r.id} r={r} />)}
+      </div>
+      {past.length > 0 && (
+        <>
+          <h4 className="text-xs uppercase tracking-wider mb-2" style={{ color: COLORS.textDim }}>Erledigt</h4>
+          <div className="space-y-1.5">{past.map((r) => <Row key={r.id} r={r} />)}</div>
+        </>
+      )}
+      {edit && <ReminderModal S={S} isAdmin={isAdmin} act={act} init={edit} onClose={() => setEdit(null)} />}
+    </div>
+  );
+}
+
+function ReminderModal({ S, isAdmin, act, init, onClose }) {
+  const r = init.reminder;
+  const inOneHour = new Date(Date.now() + 3600000);
+  const [f, setF] = useState({
+    text: r ? r.text : init.text || "",
+    date: r ? r.date : init.date || localISO(inOneHour),
+    time: r ? r.time : init.time || `${pad(inOneHour.getHours())}:${pad(Math.floor(inOneHour.getMinutes() / 5) * 5)}`,
+    repeat: r ? r.repeat : "none",
+    target: r ? r.target : init.target || "self",
+    taskId: r ? r.taskId || null : init.taskId || null,
+  });
+  const [err, setErr] = useState("");
+  const set = (k) => (v) => setF((p) => ({ ...p, [k]: v && v.target ? v.target.value : v }));
+  const task = f.taskId ? S.tasks.find((t) => t.id === f.taskId) : null;
+  async function save() {
+    setErr("");
+    try { await api(r ? "/reminders/" + r.id : "/reminders", { method: r ? "PATCH" : "POST", token: store.get(TOKEN_KEY), body: f }); await act("/state").catch(() => {}); onClose(); }
+    catch (e) { setErr(e.message); }
+  }
+  async function del() {
+    if (!confirm("Erinnerung löschen?")) return;
+    try { await act("/reminders/" + r.id, { method: "DELETE" }); onClose(); } catch (e) {}
+  }
+  const quick = [["In 15 Min", 15], ["In 1 Std", 60], ["Morgen 8:00", "m8"]];
+  function setQuick(q) {
+    let d;
+    if (q === "m8") { d = new Date(); d.setDate(d.getDate() + 1); d.setHours(8, 0, 0, 0); }
+    else d = new Date(Date.now() + q * 60000);
+    setF((p) => ({ ...p, date: localISO(d), time: hmOf(d.getTime()) }));
+  }
+  return (
+    <Modal onClose={onClose}>
+      <h3 className="text-sm font-medium mb-3">{r ? "Erinnerung bearbeiten" : "⏰ Neue Erinnerung"}</h3>
+      {task && <p className="text-xs mb-2" style={{ color: COLORS.textDim }}>📋 zur Aufgabe: {task.title}</p>}
+      <Field label="Woran erinnern?"><TextInput value={f.text} onChange={set("text")} autoFocus placeholder="z. B. Skischuhtrockner ausschalten" /></Field>
+      <div className="flex gap-1.5 mb-3 flex-wrap">{quick.map(([l, q]) => <button key={l} onClick={() => setQuick(q)} className="text-xs px-2.5 py-1 rounded-full" style={{ border: `1px solid ${COLORS.panelBorder}`, color: COLORS.textDim }}>{l}</button>)}</div>
+      <div className="grid grid-cols-2 gap-2">
+        <Field label="Datum"><TextInput type="date" value={f.date} onChange={set("date")} /></Field>
+        <Field label="Uhrzeit"><TextInput type="time" value={f.time} onChange={set("time")} /></Field>
+      </div>
+      <Field label="Wiederholen">
+        <Select value={f.repeat} onChange={set("repeat")}>{Object.entries(REPEAT_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</Select>
+      </Field>
+      {isAdmin && (
+        <Field label="Für wen?">
+          <Select value={f.target} onChange={set("target")}>
+            <option value="self">Nur für mich</option>
+            <option value="all">👥 Für alle</option>
+            {S.employees.filter((e) => e.active).map((e) => <option key={e.id} value={e.id}>👤 {e.name}</option>)}
+          </Select>
+        </Field>
+      )}
+      {err && <p className="text-xs mb-2" style={{ color: COLORS.danger }}>{err}</p>}
+      <div className="flex gap-2">
+        <Btn onClick={save} className="flex-1">Speichern</Btn>
+        {r && <Btn kind="ghost" onClick={del}>🗑</Btn>}
+        <Btn kind="ghost" onClick={onClose}>Abbrechen</Btn>
+      </div>
+    </Modal>
   );
 }
 
