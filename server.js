@@ -24,7 +24,7 @@ let pgPool = null;
 function emptyData() {
   return {
     admins: [], employees: [], timeEntries: [], todos: [], tasks: [],
-    shifts: [], checklistTemplates: [], checklistRuns: [],
+    shifts: [], checklistTemplates: [], checklistRuns: [], sessions: [], messages: [],
   };
 }
 
@@ -138,25 +138,50 @@ function findAdminByToken(token) {
   if (!token) return null;
   return data.admins.find((a) => a.token === token) || null;
 }
+// Mitarbeiter-Sitzung (Login mit Name + PIN)
+function findEmployeeByToken(token) {
+  if (!token) return null;
+  const s = data.sessions.find((x) => x.token === token);
+  if (!s) return null;
+  const emp = data.employees.find((e) => e.id === s.employeeId);
+  return emp && emp.active !== false ? emp : null;
+}
+function getAuth(req) {
+  const token = getToken(req);
+  const admin = findAdminByToken(token);
+  return { admin, employee: admin ? null : findEmployeeByToken(token) };
+}
+function requireUser(req, res, next) {
+  const a = getAuth(req);
+  if (!a.admin && !a.employee) return res.status(401).json({ error: "Bitte zuerst anmelden.", needLogin: true });
+  req.auth = a;
+  next();
+}
+// Für welche Person gilt eine Stempel-Aktion? Mitarbeiter: immer sich selbst. Admin: frei wählbar.
+function targetEmployee(req, res) {
+  const { admin, employee } = req.auth;
+  if (employee) return employee;
+  const emp = data.employees.find((e) => e.id === (req.body || {}).employeeId);
+  if (!emp) { res.status(404).json({ error: "Mitarbeiter nicht gefunden." }); return null; }
+  return emp;
+}
+// Schutz gegen PIN-Raten: 5 Fehlversuche -> 5 Minuten gesperrt
+const failed = new Map();
+function isLocked(key) {
+  const f = failed.get(key);
+  return f && f.count >= 5 && Date.now() - f.last < 5 * 60000;
+}
+function noteFail(key) {
+  const f = failed.get(key) || { count: 0, last: 0 };
+  if (Date.now() - f.last > 5 * 60000) f.count = 0;
+  f.count++; f.last = Date.now();
+  failed.set(key, f);
+}
 function requireAdmin(req, res, next) {
   const admin = findAdminByToken(getToken(req));
   if (!admin) return res.status(401).json({ error: "Nicht autorisiert. Bitte als Admin anmelden." });
   req.admin = admin;
   next();
-}
-// Mitarbeiter-Aktionen: Admin darf immer, sonst PIN prüfen (falls gesetzt)
-function checkEmployee(req, res, employeeId) {
-  const emp = data.employees.find((e) => e.id === employeeId);
-  if (!emp) { res.status(404).json({ error: "Mitarbeiter nicht gefunden." }); return null; }
-  if (findAdminByToken(getToken(req))) return emp;
-  if (emp.pinHash) {
-    const pin = str((req.body || {}).pin, 20);
-    if (!pin || hashPin(pin, emp.salt) !== emp.pinHash) {
-      res.status(403).json({ error: "PIN falsch.", needPin: true });
-      return null;
-    }
-  }
-  return emp;
 }
 function publicAdmin(a) {
   return { id: a.id, name: a.name };
@@ -172,21 +197,72 @@ function runningEntry(employeeId) {
 // State
 // ---------------------------------------------------------------------------
 app.get("/api/state", (req, res) => {
-  const admin = findAdminByToken(getToken(req));
+  const { admin, employee } = getAuth(req);
+  const base = { locations: LOCATIONS, today: localDate(), adminCount: data.admins.length };
+  if (!admin && !employee) {
+    // Nicht angemeldet: nur Namen für die Login-Auswahl
+    return res.json({
+      ...base, role: null,
+      loginEmployees: data.employees.filter((e) => e.active !== false && e.pinHash).map((e) => ({ id: e.id, name: e.name })),
+    });
+  }
   res.json({
+    ...base,
+    role: admin ? "admin" : "employee",
+    adminName: admin ? admin.name : null,
+    me: employee ? { id: employee.id, name: employee.name } : null,
+    myAuthorId: employee ? employee.id : "admin:" + admin.id,
     employees: data.employees.map(publicEmployee),
-    timeEntries: data.timeEntries,
+    // Arbeitszeiten: Admin sieht alle, Mitarbeiter nur die eigenen
+    timeEntries: admin ? data.timeEntries : data.timeEntries.filter((t) => t.employeeId === employee.id),
     todos: data.todos,
     tasks: data.tasks,
     shifts: data.shifts,
     checklistTemplates: data.checklistTemplates,
     checklistRuns: data.checklistRuns.filter((r) => r.date >= localDate(Date.now() - 14 * 864e5)),
-    locations: LOCATIONS,
-    today: localDate(),
-    adminCount: data.admins.length,
-    isAdmin: !!admin,
-    adminName: admin ? admin.name : null,
+    messages: data.messages.slice(-200),
   });
+});
+
+// ---------------------------------------------------------------------------
+// Mitarbeiter-Login
+// ---------------------------------------------------------------------------
+app.post("/api/login", (req, res) => {
+  const { employeeId, pin } = req.body || {};
+  const emp = data.employees.find((e) => e.id === employeeId && e.active !== false);
+  if (!emp || !emp.pinHash) return res.status(401).json({ error: "Name oder PIN falsch." });
+  if (isLocked("emp:" + emp.id)) return res.status(429).json({ error: "Zu viele Fehlversuche. Bitte 5 Minuten warten." });
+  if (hashPin(str(pin, 20), emp.salt) !== emp.pinHash) { noteFail("emp:" + emp.id); return res.status(401).json({ error: "Name oder PIN falsch." }); }
+  failed.delete("emp:" + emp.id);
+  const token = uid() + uid() + uid();
+  data.sessions.push({ token, employeeId: emp.id, created: Date.now() });
+  // pro Mitarbeiter max. 5 Geräte angemeldet
+  const mine = data.sessions.filter((x) => x.employeeId === emp.id);
+  if (mine.length > 5) { const drop = new Set(mine.slice(0, mine.length - 5).map((x) => x.token)); data.sessions = data.sessions.filter((x) => !drop.has(x.token)); }
+  persist();
+  res.json({ token, role: "employee", name: emp.name });
+});
+
+app.post("/api/logout", (req, res) => {
+  const token = getToken(req);
+  data.sessions = data.sessions.filter((x) => x.token !== token);
+  persist();
+  res.json({ ok: true });
+});
+
+// Mitarbeiter ändert eigene PIN
+app.post("/api/me/pin", requireUser, (req, res) => {
+  const emp = req.auth.employee;
+  if (!emp) return res.status(400).json({ error: "Nur für Mitarbeiter." });
+  const { oldPin, newPin } = req.body || {};
+  if (hashPin(str(oldPin, 20), emp.salt) !== emp.pinHash) return res.status(403).json({ error: "Alte PIN falsch." });
+  const np = str(newPin, 20);
+  if (np.length < 4) return res.status(400).json({ error: "Neue PIN muss mind. 4 Zeichen haben." });
+  emp.salt = uid(); emp.pinHash = hashPin(np, emp.salt);
+  const token = getToken(req);
+  data.sessions = data.sessions.filter((x) => x.employeeId !== emp.id || x.token === token); // andere Geräte abmelden
+  persist();
+  res.json({ ok: true });
 });
 
 // ---------------------------------------------------------------------------
@@ -205,8 +281,11 @@ app.post("/api/admin/setup", (req, res) => {
 
 app.post("/api/admin/login", (req, res) => {
   const { name, pin } = req.body || {};
+  const key = "admin:" + str(name).toLowerCase();
+  if (isLocked(key)) return res.status(429).json({ error: "Zu viele Fehlversuche. Bitte 5 Minuten warten." });
   const admin = data.admins.find((a) => a.name.toLowerCase() === str(name).toLowerCase());
-  if (!admin || hashPin(String(pin || ""), admin.salt) !== admin.pinHash) return res.status(401).json({ error: "Name oder PIN falsch." });
+  if (!admin || hashPin(String(pin || ""), admin.salt) !== admin.pinHash) { noteFail(key); return res.status(401).json({ error: "Name oder PIN falsch." }); }
+  failed.delete(key);
   admin.token = uid() + uid();
   persist();
   res.json({ token: admin.token, name: admin.name });
@@ -241,8 +320,12 @@ app.post("/api/employees", (req, res) => {
     return res.status(401).json({ error: "Nur Admins können Mitarbeiter anlegen." });
   }
   const name = str((req.body || {}).name, 50);
+  const pin = str((req.body || {}).pin, 20);
   if (!name) return res.status(400).json({ error: "Name erforderlich." });
-  const emp = { id: uid(), name, active: true, weeklyHours: null };
+  if (pin.length < 4) return res.status(400).json({ error: "PIN mit mind. 4 Zeichen erforderlich." });
+  if (data.employees.some((e) => e.name.toLowerCase() === name.toLowerCase())) return res.status(400).json({ error: "Diesen Namen gibt es schon." });
+  const salt = uid();
+  const emp = { id: uid(), name, active: true, weeklyHours: null, salt, pinHash: hashPin(pin, salt) };
   data.employees.push(emp);
   persist();
   res.json(publicEmployee(emp));
@@ -260,10 +343,11 @@ app.patch("/api/employees/:id", requireAdmin, (req, res) => {
   }
   if (b.pin !== undefined) {
     const pin = str(b.pin, 20);
-    if (pin === "") { delete emp.pinHash; delete emp.salt; }
-    else if (pin.length < 4) return res.status(400).json({ error: "PIN muss mind. 4 Zeichen haben." });
-    else { emp.salt = uid(); emp.pinHash = hashPin(pin, emp.salt); }
+    if (pin.length < 4) return res.status(400).json({ error: "PIN muss mind. 4 Zeichen haben." });
+    emp.salt = uid(); emp.pinHash = hashPin(pin, emp.salt);
+    data.sessions = data.sessions.filter((x) => x.employeeId !== emp.id); // alle Geräte abmelden
   }
+  if (emp.active === false) data.sessions = data.sessions.filter((x) => x.employeeId !== emp.id);
   persist();
   res.json(publicEmployee(emp));
 });
@@ -274,6 +358,7 @@ app.delete("/api/employees/:id", requireAdmin, (req, res) => {
   data.timeEntries = data.timeEntries.filter((e) => e.employeeId !== id);
   data.todos = data.todos.filter((t) => t.employeeId !== id);
   data.shifts = data.shifts.filter((s) => s.employeeId !== id);
+  data.sessions = data.sessions.filter((x) => x.employeeId !== id);
   data.tasks = data.tasks.map((t) => (t.employeeId === id ? { ...t, employeeId: null } : t));
   persist();
   res.json({ ok: true });
@@ -282,10 +367,11 @@ app.delete("/api/employees/:id", requireAdmin, (req, res) => {
 // ---------------------------------------------------------------------------
 // Zeiterfassung
 // ---------------------------------------------------------------------------
-app.post("/api/time/clockin", (req, res) => {
-  const { employeeId, location } = req.body || {};
-  const emp = checkEmployee(req, res, employeeId);
+app.post("/api/time/clockin", requireUser, (req, res) => {
+  const { location } = req.body || {};
+  const emp = targetEmployee(req, res);
   if (!emp) return;
+  const employeeId = emp.id;
   if (runningEntry(employeeId)) return res.status(400).json({ error: "Bereits eingestempelt." });
   const now = Date.now();
   const entry = {
@@ -297,10 +383,10 @@ app.post("/api/time/clockin", (req, res) => {
   res.json(entry);
 });
 
-app.post("/api/time/pause", (req, res) => {
-  const { employeeId } = req.body || {};
-  if (!checkEmployee(req, res, employeeId)) return;
-  const entry = runningEntry(employeeId);
+app.post("/api/time/pause", requireUser, (req, res) => {
+  const emp = targetEmployee(req, res);
+  if (!emp) return;
+  const entry = runningEntry(emp.id);
   if (!entry) return res.status(400).json({ error: "Nicht eingestempelt." });
   const open = entry.breaks.find((b) => b.end === null);
   if (open) open.end = Date.now();          // Pause beenden
@@ -309,10 +395,10 @@ app.post("/api/time/pause", (req, res) => {
   res.json(entry);
 });
 
-app.post("/api/time/clockout", (req, res) => {
-  const { employeeId } = req.body || {};
-  if (!checkEmployee(req, res, employeeId)) return;
-  const entry = runningEntry(employeeId);
+app.post("/api/time/clockout", requireUser, (req, res) => {
+  const emp = targetEmployee(req, res);
+  if (!emp) return;
+  const entry = runningEntry(emp.id);
   if (!entry) return res.status(400).json({ error: "Kein laufender Eintrag." });
   const now = Date.now();
   entry.breaks.forEach((b) => { if (b.end === null) b.end = now; });
@@ -375,7 +461,7 @@ app.delete("/api/time/:id", requireAdmin, (req, res) => {
 // ---------------------------------------------------------------------------
 // To-Dos
 // ---------------------------------------------------------------------------
-app.post("/api/todos", (req, res) => {
+app.post("/api/todos", requireUser, (req, res) => {
   const { employeeId, text, due } = req.body || {};
   if (!employeeId || !str(text)) return res.status(400).json({ error: "Mitarbeiter und Text erforderlich." });
   const todo = { id: uid(), employeeId, text: str(text), due: isDate(due) ? due : null, done: false };
@@ -384,7 +470,7 @@ app.post("/api/todos", (req, res) => {
   res.json(todo);
 });
 
-app.patch("/api/todos/:id/toggle", (req, res) => {
+app.patch("/api/todos/:id/toggle", requireUser, (req, res) => {
   const todo = data.todos.find((t) => t.id === req.params.id);
   if (!todo) return res.status(404).json({ error: "Nicht gefunden." });
   todo.done = !todo.done;
@@ -418,7 +504,7 @@ function applyTaskFields(task, b) {
   }
 }
 
-app.post("/api/tasks", (req, res) => {
+app.post("/api/tasks", requireUser, (req, res) => {
   const b = req.body || {};
   if (!str(b.title)) return res.status(400).json({ error: "Titel erforderlich." });
   const task = { id: uid(), title: "", description: "", employeeId: null, status: "offen", location: null, due: null, priority: "normal", createdAt: Date.now(), doneAt: null };
@@ -428,7 +514,7 @@ app.post("/api/tasks", (req, res) => {
   res.json(task);
 });
 
-app.patch("/api/tasks/:id", (req, res) => {
+app.patch("/api/tasks/:id", requireUser, (req, res) => {
   const task = data.tasks.find((t) => t.id === req.params.id);
   if (!task) return res.status(404).json({ error: "Nicht gefunden." });
   applyTaskFields(task, req.body || {});
@@ -438,7 +524,7 @@ app.patch("/api/tasks/:id", (req, res) => {
 });
 
 // alte Route (Kompatibilität)
-app.patch("/api/tasks/:id/move", (req, res) => {
+app.patch("/api/tasks/:id/move", requireUser, (req, res) => {
   const task = data.tasks.find((t) => t.id === req.params.id);
   if (!task) return res.status(404).json({ error: "Nicht gefunden." });
   applyTaskFields(task, { status: (req.body || {}).status });
@@ -490,17 +576,16 @@ app.delete("/api/checklists/templates/:id", requireAdmin, (req, res) => {
 
 // Punkt abhaken / zurücksetzen. Punkte werden über ihren Text gespeichert,
 // damit Änderungen an der Vorlage alte Häkchen nicht verschieben.
-app.post("/api/checklists/check", (req, res) => {
-  const { templateId, item, employeeId } = req.body || {};
+app.post("/api/checklists/check", requireUser, (req, res) => {
+  const { templateId, item } = req.body || {};
   const date = isDate((req.body || {}).date) ? req.body.date : localDate();
   const tpl = data.checklistTemplates.find((t) => t.id === templateId);
   if (!tpl || !tpl.items.includes(item)) return res.status(400).json({ error: "Checkliste oder Punkt nicht gefunden." });
-  const emp = data.employees.find((e) => e.id === employeeId);
-  if (!emp) return res.status(400).json({ error: "Bitte oben einen Mitarbeiter auswählen." });
+  const who = req.auth.employee ? { by: req.auth.employee.id, byName: req.auth.employee.name } : { by: null, byName: req.auth.admin.name };
   let run = data.checklistRuns.find((r) => r.templateId === templateId && r.date === date);
   if (!run) { run = { id: uid(), templateId, date, checks: {} }; data.checklistRuns.push(run); }
   if (run.checks[item]) delete run.checks[item];
-  else run.checks[item] = { by: emp.id, byName: emp.name, at: Date.now() };
+  else run.checks[item] = { ...who, at: Date.now() };
   persist();
   res.json(run);
 });
@@ -568,6 +653,38 @@ app.post("/api/shifts/copy-week", requireAdmin, (req, res) => {
   });
   persist();
   res.json({ created });
+});
+
+// ---------------------------------------------------------------------------
+// Gruppenchat
+// ---------------------------------------------------------------------------
+const MAX_MESSAGES = 2000;
+
+app.post("/api/chat", requireUser, (req, res) => {
+  const text = str((req.body || {}).text, 2000);
+  if (!text) return res.status(400).json({ error: "Nachricht ist leer." });
+  const { admin, employee } = req.auth;
+  const msg = {
+    id: uid(), text, at: Date.now(),
+    authorId: employee ? employee.id : "admin:" + admin.id,
+    authorName: employee ? employee.name : admin.name,
+    isAdmin: !!admin,
+  };
+  data.messages.push(msg);
+  if (data.messages.length > MAX_MESSAGES) data.messages = data.messages.slice(-MAX_MESSAGES);
+  persist();
+  res.json(msg);
+});
+
+// Löschen: eigene Nachricht oder als Admin jede
+app.delete("/api/chat/:id", requireUser, (req, res) => {
+  const msg = data.messages.find((m) => m.id === req.params.id);
+  if (!msg) return res.status(404).json({ error: "Nicht gefunden." });
+  const { admin, employee } = req.auth;
+  if (!admin && msg.authorId !== employee.id) return res.status(403).json({ error: "Nur eigene Nachrichten löschbar." });
+  data.messages = data.messages.filter((m) => m.id !== msg.id);
+  persist();
+  res.json({ ok: true });
 });
 
 // ---------------------------------------------------------------------------
