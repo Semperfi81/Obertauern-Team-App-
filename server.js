@@ -197,7 +197,7 @@ function findEmployeeByToken(token) {
   return emp && emp.active !== false ? emp : null;
 }
 const isAdminEntry = (t) => typeof t.employeeId === "string" && t.employeeId.startsWith("admin:");
-// Admin-Zeiten darf nur der jeweilige Admin selbst sehen/ändern
+// Admin-Zeiten sehen alle Admins, ändern darf sie nur der jeweilige Admin selbst
 function foreignAdminEntry(req, entry) {
   return isAdminEntry(entry) && entry.employeeId !== "admin:" + req.admin.id;
 }
@@ -272,11 +272,11 @@ app.get("/api/state", (req, res) => {
     me: employee ? { id: employee.id, name: employee.name } : null,
     myAuthorId: employee ? employee.id : "admin:" + admin.id,
     // Admins (für Admin-Zeiterfassung) – nur Admins bekommen diese Liste
-    admins: admin ? [{ id: "admin:" + admin.id, name: admin.name }] : undefined,
+    admins: admin ? data.admins.map((a) => ({ id: "admin:" + a.id, name: a.name })) : undefined,
     employees: data.employees.map(publicEmployee),
     // Arbeitszeiten: Admin sieht alle, Mitarbeiter nur die eigenen
-    // Admin: alle Mitarbeiter-Zeiten + nur die EIGENEN Admin-Zeiten (andere Admins unsichtbar)
-    timeEntries: admin ? data.timeEntries.filter((t) => !isAdminEntry(t) || t.employeeId === "admin:" + admin.id) : data.timeEntries.filter((t) => t.employeeId === employee.id),
+    // Admin: alle Zeiten (inkl. Admin-Zeiten aller Admins). Mitarbeiter: nur die eigenen
+    timeEntries: admin ? data.timeEntries : data.timeEntries.filter((t) => t.employeeId === employee.id),
     // Aufgaben/To-Dos: Mitarbeiter sehen nur ihre eigenen und die "für alle"
     todos: admin ? data.todos : data.todos.filter((t) => t.employeeId === employee.id),
     tasks: admin ? data.tasks : data.tasks.filter((t) => canSeeTask(t, employee)),
