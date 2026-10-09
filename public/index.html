@@ -107,6 +107,22 @@ function entryBreakMs(e, now = Date.now()) {
 }
 const entryGrossMs = (e, now = Date.now()) => (e.end || now) - e.start;
 const entryNetMs = (e, now = Date.now()) => Math.max(0, entryGrossMs(e, now) - entryBreakMs(e, now));
+// Tageswerte inkl. automatischer Mittagspause (gestempelte Pausen werden angerechnet)
+function dayStats(S, personId, date, now = Date.now()) {
+  const list = S.timeEntries.filter((e) => e.employeeId === personId && e.date === date);
+  const gross = list.reduce((s, e) => s + entryGrossMs(e, now), 0);
+  const brk = list.reduce((s, e) => s + entryBreakMs(e, now), 0);
+  const worked = Math.max(0, gross - brk);
+  const L = S.lunch || {};
+  let lunch = 0;
+  if (L.enabled && worked > (L.minHours || 0) * 3600000) lunch = Math.min(Math.max(0, (L.minutes || 0) * 60000 - brk), worked);
+  return { list, gross, brk, lunch, net: Math.max(0, worked - lunch) };
+}
+function rangeStats(S, personId, dates) {
+  const r = { net: 0, brk: 0, lunch: 0, days: 0 };
+  [...new Set(dates)].forEach((d) => { const x = dayStats(S, personId, d); if (x.list.length) r.days++; r.net += x.net; r.brk += x.brk; r.lunch += x.lunch; });
+  return r;
+}
 const onBreak = (e) => !!e && e.end === null && (e.breaks || []).some((b) => b.end === null);
 const shiftMs = (s) => { let d = minutesOf(s.end) - minutesOf(s.start); if (d < 0) d += 1440; return d * 60000; };
 
@@ -641,7 +657,7 @@ function ZeitTab({ S, me, isAdmin, empAct, activeEmployees }) {
         <div className="space-y-3">
           {sorted.map((emp) => {
             const days = weekDays(monday);
-            const dayTotals = days.map((d) => S.timeEntries.filter((e) => e.employeeId === emp.id && e.date === d).reduce((s, e) => s + entryNetMs(e), 0));
+            const dayTotals = days.map((d) => dayStats(S, emp.id, d).net);
             const weekTotal = dayTotals.reduce((a, b) => a + b, 0);
             const planned = S.shifts.filter((s) => s.employeeId === emp.id && days.includes(s.date)).reduce((a, s) => a + shiftMs(s), 0);
             const maxDay = Math.max(...dayTotals, 1);
@@ -678,8 +694,8 @@ function ZeitTab({ S, me, isAdmin, empAct, activeEmployees }) {
 function MyMonthPanel({ S, me }) {
   const ym = todayISO().slice(0, 7);
   const entries = S.timeEntries.filter((e) => e.employeeId === me && e.date.startsWith(ym));
-  const net = entries.reduce((s, e) => s + entryNetMs(e), 0);
-  const days = new Set(entries.map((e) => e.date)).size;
+  const st = rangeStats(S, me, entries.map((e) => e.date));
+  const net = st.net, days = st.days;
   const planned = S.shifts.filter((s) => s.employeeId === me && s.date.startsWith(ym)).reduce((a, s) => a + shiftMs(s), 0);
   return (
     <Panel>
@@ -697,14 +713,14 @@ function ClockCard({ emp, S, isMe, empAct, today }) {
   const running = S.timeEntries.find((e) => e.employeeId === emp.id && e.end === null);
   const paused = onBreak(running);
   const todays = S.timeEntries.filter((e) => e.employeeId === emp.id && e.date === today).sort((a, b) => b.start - a.start);
-  const net = todays.reduce((s, e) => s + entryNetMs(e), 0);
-  const brk = todays.reduce((s, e) => s + entryBreakMs(e), 0);
+  const ds = dayStats(S, emp.id, today);
+  const net = ds.net, brk = ds.brk, lunch = ds.lunch;
   const shift = S.shifts.filter((s) => s.employeeId === emp.id && s.date === today).sort((a, b) => a.start.localeCompare(b.start))[0];
   const [loc, setLoc] = useState(shift && shift.location ? shift.location : "");
   const [busy, setBusy] = useState(false);
   const go = async (path, body) => { setBusy(true); try { await empAct(emp.id, path, body); } finally { setBusy(false); } };
   const openBreak = running && (running.breaks || []).find((b) => b.end === null);
-  const needsBreakHint = running && !paused && entryNetMs(running) > 6 * 3600000 && entryBreakMs(running) < 30 * 60000;
+  const needsBreakHint = !(S.lunch && S.lunch.enabled) && running && !paused && entryNetMs(running) > 6 * 3600000 && entryBreakMs(running) < 30 * 60000;
 
   const status = !running
     ? { text: "Nicht eingestempelt", color: COLORS.textDim }
@@ -724,7 +740,7 @@ function ClockCard({ emp, S, isMe, empAct, today }) {
         </div>
         <div className="text-right">
           <div className="text-lg font-semibold tabular-nums">{fmtDuration(net)}</div>
-          <div className="text-[11px]" style={{ color: COLORS.textDim }}>netto heute{brk > 0 && ` · Pause ${Math.round(brk / 60000)} Min`}</div>
+          <div className="text-[11px]" style={{ color: COLORS.textDim }}>netto heute{brk > 0 && ` · Pause ${Math.round(brk / 60000)} Min`}{lunch > 0 && ` · 🍽 ${Math.round(lunch / 60000)} Min Mittag`}</div>
         </div>
       </div>
       {shift && (
@@ -1245,18 +1261,17 @@ function monthStats(S, emp, ym) {
   const entries = S.timeEntries.filter((e) => e.employeeId === emp.id && e.date.startsWith(ym));
   const byDay = {};
   entries.forEach((e) => { (byDay[e.date] = byDay[e.date] || []).push(e); });
-  const net = entries.reduce((s, e) => s + entryNetMs(e), 0);
-  const brk = entries.reduce((s, e) => s + entryBreakMs(e), 0);
+  let net = 0, brk = 0, lunch = 0;
   const planned = S.shifts.filter((s) => s.employeeId === emp.id && s.date.startsWith(ym)).reduce((a, s) => a + shiftMs(s), 0);
   const warnings = [];
-  Object.entries(byDay).forEach(([d, list]) => {
-    const n = list.reduce((s, e) => s + entryNetMs(e), 0);
-    const b = list.reduce((s, e) => s + entryBreakMs(e), 0);
-    if (n > 6 * 3600000 && b < 30 * 60000) warnings.push(`${fmtDateShort(d)}: >6 h ohne 30 Min Pause`);
-    if (n > 10 * 3600000) warnings.push(`${fmtDateShort(d)}: über 10 h`);
+  Object.keys(byDay).forEach((d) => {
+    const x = dayStats(S, emp.id, d);
+    net += x.net; brk += x.brk; lunch += x.lunch;
+    if (x.net > 6 * 3600000 && x.brk + x.lunch < 30 * 60000) warnings.push(`${fmtDateShort(d)}: >6 h ohne 30 Min Pause`);
+    if (x.net > 10 * 3600000) warnings.push(`${fmtDateShort(d)}: über 10 h`);
   });
   entries.filter((e) => e.end === null && e.date < todayISO()).forEach((e) => warnings.push(`${fmtDateShort(e.date)}: nicht ausgestempelt`));
-  return { entries, days: Object.keys(byDay).length, net, brk, planned, warnings };
+  return { entries, days: Object.keys(byDay).length, net, brk, lunch, planned, warnings };
 }
 
 const isAdminId = (id) => String(id).startsWith("admin:");
@@ -1272,15 +1287,19 @@ function MonthView({ S, mode = "staff" }) {
   const total = rows.reduce((s, r) => s + r.net, 0);
 
   function exportSummary() {
-    const out = [[admins ? "Admin" : "Mitarbeiter", "Monat", "Arbeitstage", "Netto (Std)", "Pausen (Std)", "Geplant (Std)", "Differenz (Std)", "Hinweise"]];
-    rows.forEach((r) => out.push([r.e.name, ym, r.days, fmtHours(r.net), fmtHours(r.brk), fmtHours(r.planned), r.planned ? fmtHours(r.net - r.planned) : "", r.warnings.join(" | ")]));
+    const out = [[admins ? "Admin" : "Mitarbeiter", "Monat", "Arbeitstage", "Netto (Std)", "Pausen gestempelt (Std)", "Mittagspause automatisch (Std)", "Geplant (Std)", "Differenz (Std)", "Hinweise"]];
+    rows.forEach((r) => out.push([r.e.name, ym, r.days, fmtHours(r.net), fmtHours(r.brk), fmtHours(r.lunch), fmtHours(r.planned), r.planned ? fmtHours(r.net - r.planned) : "", r.warnings.join(" | ")]));
     downloadCSV(`${prefix}_${ym}_zusammenfassung.csv`, out);
   }
   function exportDetail() {
-    const out = [[admins ? "Admin" : "Mitarbeiter", "Datum", "Wochentag", "Beginn", "Ende", "Pause (Min)", "Netto (Std)", "Standort", "Notiz", "Korrigiert von"]];
-    S.timeEntries.filter((e) => e.date.startsWith(ym) && isAdminId(e.employeeId) === admins).sort((a, b) => a.date.localeCompare(b.date) || a.start - b.start).forEach((e) => {
-      const emp = { name: personName(S, e.employeeId) };
-      out.push([emp ? emp.name : "?", parseISO(e.date).toLocaleDateString("de-AT"), fmtDateShort(e.date).split(",")[0], fmtClock(e.start), e.end ? fmtClock(e.end) : "läuft", Math.round(entryBreakMs(e) / 60000), fmtHours(entryNetMs(e)), e.location || "", e.note || "", e.editedBy || ""]);
+    const out = [[admins ? "Admin" : "Mitarbeiter", "Datum", "Wochentag", "Beginn", "Ende", "Pause gestempelt (Min)", "Mittagspause automatisch (Min)", "Netto (Std)", "Standort", "Notiz", "Korrigiert von"]];
+    const seen = new Set();
+    S.timeEntries.filter((e) => e.date.startsWith(ym) && isAdminId(e.employeeId) === admins).sort((a, b) => personName(S, a.employeeId).localeCompare(personName(S, b.employeeId)) || a.date.localeCompare(b.date) || a.start - b.start).forEach((e) => {
+      // Mittagspause einmal pro Tag (beim ersten Eintrag des Tages) abziehen
+      const key = e.employeeId + "|" + e.date;
+      let lunch = 0;
+      if (!seen.has(key)) { seen.add(key); lunch = dayStats(S, e.employeeId, e.date).lunch; }
+      out.push([personName(S, e.employeeId), parseISO(e.date).toLocaleDateString("de-AT"), fmtDateShort(e.date).split(",")[0], fmtClock(e.start), e.end ? fmtClock(e.end) : "läuft", Math.round(entryBreakMs(e) / 60000), lunch ? Math.round(lunch / 60000) : "", fmtHours(Math.max(0, entryNetMs(e) - lunch)), e.location || "", e.note || "", e.editedBy || ""]);
     });
     downloadCSV(`${prefix}_${ym}_details.csv`, out);
   }
@@ -1300,6 +1319,7 @@ function MonthView({ S, mode = "staff" }) {
               <th className="p-3 font-medium text-right">Tage</th>
               <th className="p-3 font-medium text-right">Netto</th>
               <th className="p-3 font-medium text-right hidden sm:table-cell">Pause</th>
+              <th className="p-3 font-medium text-right" title="automatisch abgezogene Mittagspause">🍽 Mittag</th>
               <th className="p-3 font-medium text-right">Geplant</th>
               <th className="p-3 font-medium text-right">Diff.</th>
             </tr>
@@ -1314,11 +1334,12 @@ function MonthView({ S, mode = "staff" }) {
                     <td className="p-3 text-right tabular-nums">{r.days}</td>
                     <td className="p-3 text-right tabular-nums font-medium">{fmtHours(r.net)}</td>
                     <td className="p-3 text-right tabular-nums hidden sm:table-cell" style={{ color: COLORS.textDim }}>{fmtHours(r.brk)}</td>
+                    <td className="p-3 text-right tabular-nums" style={{ color: COLORS.textDim }}>{r.lunch ? fmtHours(r.lunch) : "–"}</td>
                     <td className="p-3 text-right tabular-nums" style={{ color: COLORS.textDim }}>{r.planned ? fmtHours(r.planned) : "–"}</td>
                     <td className="p-3 text-right tabular-nums" style={{ color: !r.planned ? COLORS.textDim : diff >= 0 ? COLORS.accent2 : COLORS.danger }}>{r.planned ? (diff >= 0 ? "+" : "") + fmtHours(diff) : "–"}</td>
                   </tr>
                   {r.warnings.length > 0 && (
-                    <tr><td colSpan={6} className="px-3 pb-2 text-[11px]" style={{ color: COLORS.warn }}>{r.warnings.join(" · ")}</td></tr>
+                    <tr><td colSpan={7} className="px-3 pb-2 text-[11px]" style={{ color: COLORS.warn }}>{r.warnings.join(" · ")}</td></tr>
                   )}
                 </React.Fragment>
               );
@@ -1326,12 +1347,14 @@ function MonthView({ S, mode = "staff" }) {
             <tr style={{ borderTop: `1px solid ${COLORS.panelBorder}` }}>
               <td className="p-3 font-medium">Gesamt</td><td></td>
               <td className="p-3 text-right tabular-nums font-semibold" style={{ color: COLORS.accent }}>{fmtHours(total)}</td>
-              <td colSpan={3}></td>
+              <td className="hidden sm:table-cell"></td>
+              <td className="p-3 text-right tabular-nums" style={{ color: COLORS.textDim }}>{fmtHours(rows.reduce((s, r) => s + r.lunch, 0))}</td>
+              <td colSpan={2}></td>
             </tr>
           </tbody>
         </table>
       </Panel>
-      <p className="text-[11px] mt-2" style={{ color: COLORS.textDim }}>Stunden als Dezimalzahl (7,50 = 7 h 30 min). CSV öffnet direkt in Excel.</p>
+      <p className="text-[11px] mt-2" style={{ color: COLORS.textDim }}>Stunden als Dezimalzahl (7,50 = 7 h 30 min). Netto = nach Abzug der Pausen und der automatischen Mittagspause{S.lunch && S.lunch.enabled ? ` (${S.lunch.minutes} Min ab ${String(S.lunch.minHours).replace(".", ",")} h Arbeit, gestempelte Pausen werden angerechnet)` : " (ausgeschaltet)"}. CSV öffnet direkt in Excel.</p>
     </div>
   );
 }
@@ -1345,6 +1368,9 @@ function EntriesView({ S, act, mode = "staff" }) {
   const canEdit = (id) => !isAdminId(id) || id === S.myAuthorId; // fremde Admin-Zeiten nur ansehen
   const entries = S.timeEntries.filter((e) => e.employeeId === empId && e.date.startsWith(ym)).sort((a, b) => b.date.localeCompare(a.date) || b.start - a.start);
   const openOld = S.timeEntries.filter((e) => e.end === null && e.date < todayISO() && (admins ? e.employeeId === S.myAuthorId : !isAdminId(e.employeeId)));
+  // Mittagspause beim ersten Eintrag des Tages anzeigen
+  const lunchFor = {};
+  [...entries].sort((a, b) => a.start - b.start).forEach((e) => { if (!(e.date in lunchFor)) lunchFor[e.date] = { id: e.id, ms: dayStats(S, empId, e.date).lunch }; });
   return (
     <div>
       {openOld.length > 0 && (
@@ -1373,8 +1399,9 @@ function EntriesView({ S, act, mode = "staff" }) {
               {entryBreakMs(e) > 0 && <span className="text-xs" style={{ color: COLORS.textDim }}>Pause {Math.round(entryBreakMs(e) / 60000)}′</span>}
               <LocTag loc={e.location} />
               {e.editedBy && <span className="text-[10px]" title={`korrigiert von ${e.editedBy}`} style={{ color: COLORS.warn }}>✎ {e.editedBy}</span>}
+              {lunchFor[e.date] && lunchFor[e.date].id === e.id && lunchFor[e.date].ms > 0 && <span className="text-xs" style={{ color: COLORS.accent }}>🍽 −{Math.round(lunchFor[e.date].ms / 60000)}′ Mittag</span>}
             </span>
-            <span className="tabular-nums font-medium whitespace-nowrap">{fmtDuration(entryNetMs(e))}</span>
+            <span className="tabular-nums font-medium whitespace-nowrap">{fmtDuration(Math.max(0, entryNetMs(e) - (lunchFor[e.date] && lunchFor[e.date].id === e.id ? lunchFor[e.date].ms : 0)))}</span>
           </button>
         ))}
       </div>
@@ -1492,10 +1519,11 @@ function TeamView({ S, act, openAdmins, token }) {
 function SettingsView({ S, act }) {
   const [locs, setLocs] = useState((S.locations || []).join("\n"));
   const [areas, setAreas] = useState((S.areas || []).join("\n"));
+  const [lunch, setLunch] = useState(() => ({ enabled: true, minutes: 60, minHours: 6, ...(S.lunch || {}) }));
   const [msg, setMsg] = useState("");
   async function save() {
     setMsg("");
-    try { await act("/settings", { method: "PUT", body: { locations: locs, areas } }); setMsg("Gespeichert ✓"); } catch (e) {}
+    try { await act("/settings", { method: "PUT", body: { locations: locs, areas, lunch } }); setMsg("Gespeichert ✓"); } catch (e) {}
   }
   return (
     <div className="grid sm:grid-cols-2 gap-3">
@@ -1508,6 +1536,17 @@ function SettingsView({ S, act }) {
         <h3 className="text-sm font-medium mb-1">☑️ Bereiche für Checklisten</h3>
         <p className="text-xs mb-2" style={{ color: COLORS.textDim }}>Gruppierung der Checklisten. Ein Bereich pro Zeile.</p>
         <textarea value={areas} onChange={(e) => setAreas(e.target.value)} rows={6} className="w-full px-3 py-2 rounded-lg" style={inputStyle} />
+      </Panel>
+      <Panel className="sm:col-span-2">
+        <h3 className="text-sm font-medium mb-1">🍽 Automatische Mittagspause</h3>
+        <p className="text-xs mb-3" style={{ color: COLORS.textDim }}>Wird pro Tag automatisch abgezogen, sobald jemand länger als die Mindest-Arbeitszeit gearbeitet hat. Selbst gestempelte Pausen werden angerechnet (wer 20 Min Pause stempelt, bekommt noch 40 Min abgezogen). Gilt für Mitarbeiter und Admins und wird in der Auswertung separat ausgewiesen.</p>
+        <label className="flex items-center gap-2 text-sm mb-3">
+          <input type="checkbox" checked={!!lunch.enabled} onChange={(e) => setLunch({ ...lunch, enabled: e.target.checked })} /> Automatisch abziehen
+        </label>
+        <div className="grid grid-cols-2 gap-2 max-w-sm">
+          <Field label="Dauer (Minuten)"><TextInput type="number" min="0" max="180" value={lunch.minutes} onChange={(e) => setLunch({ ...lunch, minutes: e.target.value })} /></Field>
+          <Field label="ab Arbeitszeit (Stunden)"><TextInput type="number" min="0" max="16" step="0.5" value={lunch.minHours} onChange={(e) => setLunch({ ...lunch, minHours: e.target.value })} /></Field>
+        </div>
       </Panel>
       <div className="sm:col-span-2 flex items-center gap-3">
         <Btn onClick={save}>Speichern</Btn>
