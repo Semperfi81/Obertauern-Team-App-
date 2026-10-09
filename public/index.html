@@ -115,7 +115,8 @@ function dayStats(S, personId, date, now = Date.now()) {
   const worked = Math.max(0, gross - brk);
   const L = S.lunch || {};
   let lunch = 0;
-  if (L.enabled && worked > (L.minHours || 0) * 3600000) lunch = Math.min(Math.max(0, (L.minutes || 0) * 60000 - brk), worked);
+  // keine automatische Mittagspause bei Admin-Zeiten
+  if (L.enabled && !String(personId).startsWith("admin:") && worked > (L.minHours || 0) * 3600000) lunch = Math.min(Math.max(0, (L.minutes || 0) * 60000 - brk), worked);
   return { list, gross, brk, lunch, net: Math.max(0, worked - lunch) };
 }
 function rangeStats(S, personId, dates) {
@@ -1267,7 +1268,7 @@ function monthStats(S, emp, ym) {
   Object.keys(byDay).forEach((d) => {
     const x = dayStats(S, emp.id, d);
     net += x.net; brk += x.brk; lunch += x.lunch;
-    if (x.net > 6 * 3600000 && x.brk + x.lunch < 30 * 60000) warnings.push(`${fmtDateShort(d)}: >6 h ohne 30 Min Pause`);
+    if (!String(emp.id).startsWith("admin:") && x.net > 6 * 3600000 && x.brk + x.lunch < 30 * 60000) warnings.push(`${fmtDateShort(d)}: >6 h ohne 30 Min Pause`);
     if (x.net > 10 * 3600000) warnings.push(`${fmtDateShort(d)}: über 10 h`);
   });
   entries.filter((e) => e.end === null && e.date < todayISO()).forEach((e) => warnings.push(`${fmtDateShort(e.date)}: nicht ausgestempelt`));
@@ -1287,19 +1288,19 @@ function MonthView({ S, mode = "staff" }) {
   const total = rows.reduce((s, r) => s + r.net, 0);
 
   function exportSummary() {
-    const out = [[admins ? "Admin" : "Mitarbeiter", "Monat", "Arbeitstage", "Netto (Std)", "Pausen gestempelt (Std)", "Mittagspause automatisch (Std)", "Geplant (Std)", "Differenz (Std)", "Hinweise"]];
-    rows.forEach((r) => out.push([r.e.name, ym, r.days, fmtHours(r.net), fmtHours(r.brk), fmtHours(r.lunch), fmtHours(r.planned), r.planned ? fmtHours(r.net - r.planned) : "", r.warnings.join(" | ")]));
+    const out = [[admins ? "Admin" : "Mitarbeiter", "Monat", "Arbeitstage", "Netto (Std)", "Pausen gestempelt (Std)", ...(admins ? [] : ["Mittagspause automatisch (Std)"]), "Geplant (Std)", "Differenz (Std)", "Hinweise"]];
+    rows.forEach((r) => out.push([r.e.name, ym, r.days, fmtHours(r.net), fmtHours(r.brk), ...(admins ? [] : [fmtHours(r.lunch)]), fmtHours(r.planned), r.planned ? fmtHours(r.net - r.planned) : "", r.warnings.join(" | ")]));
     downloadCSV(`${prefix}_${ym}_zusammenfassung.csv`, out);
   }
   function exportDetail() {
-    const out = [[admins ? "Admin" : "Mitarbeiter", "Datum", "Wochentag", "Beginn", "Ende", "Pause gestempelt (Min)", "Mittagspause automatisch (Min)", "Netto (Std)", "Standort", "Notiz", "Korrigiert von"]];
+    const out = [[admins ? "Admin" : "Mitarbeiter", "Datum", "Wochentag", "Beginn", "Ende", "Pause gestempelt (Min)", ...(admins ? [] : ["Mittagspause automatisch (Min)"]), "Netto (Std)", "Standort", "Notiz", "Korrigiert von"]];
     const seen = new Set();
     S.timeEntries.filter((e) => e.date.startsWith(ym) && isAdminId(e.employeeId) === admins).sort((a, b) => personName(S, a.employeeId).localeCompare(personName(S, b.employeeId)) || a.date.localeCompare(b.date) || a.start - b.start).forEach((e) => {
       // Mittagspause einmal pro Tag (beim ersten Eintrag des Tages) abziehen
       const key = e.employeeId + "|" + e.date;
       let lunch = 0;
       if (!seen.has(key)) { seen.add(key); lunch = dayStats(S, e.employeeId, e.date).lunch; }
-      out.push([personName(S, e.employeeId), parseISO(e.date).toLocaleDateString("de-AT"), fmtDateShort(e.date).split(",")[0], fmtClock(e.start), e.end ? fmtClock(e.end) : "läuft", Math.round(entryBreakMs(e) / 60000), lunch ? Math.round(lunch / 60000) : "", fmtHours(Math.max(0, entryNetMs(e) - lunch)), e.location || "", e.note || "", e.editedBy || ""]);
+      out.push([personName(S, e.employeeId), parseISO(e.date).toLocaleDateString("de-AT"), fmtDateShort(e.date).split(",")[0], fmtClock(e.start), e.end ? fmtClock(e.end) : "läuft", Math.round(entryBreakMs(e) / 60000), ...(admins ? [] : [lunch ? Math.round(lunch / 60000) : ""]), fmtHours(Math.max(0, entryNetMs(e) - lunch)), e.location || "", e.note || "", e.editedBy || ""]);
     });
     downloadCSV(`${prefix}_${ym}_details.csv`, out);
   }
@@ -1319,7 +1320,7 @@ function MonthView({ S, mode = "staff" }) {
               <th className="p-3 font-medium text-right">Tage</th>
               <th className="p-3 font-medium text-right">Netto</th>
               <th className="p-3 font-medium text-right hidden sm:table-cell">Pause</th>
-              <th className="p-3 font-medium text-right" title="automatisch abgezogene Mittagspause">🍽 Mittag</th>
+              {!admins && <th className="p-3 font-medium text-right" title="automatisch abgezogene Mittagspause">🍽 Mittag</th>}
               <th className="p-3 font-medium text-right">Geplant</th>
               <th className="p-3 font-medium text-right">Diff.</th>
             </tr>
@@ -1334,12 +1335,12 @@ function MonthView({ S, mode = "staff" }) {
                     <td className="p-3 text-right tabular-nums">{r.days}</td>
                     <td className="p-3 text-right tabular-nums font-medium">{fmtHours(r.net)}</td>
                     <td className="p-3 text-right tabular-nums hidden sm:table-cell" style={{ color: COLORS.textDim }}>{fmtHours(r.brk)}</td>
-                    <td className="p-3 text-right tabular-nums" style={{ color: COLORS.textDim }}>{r.lunch ? fmtHours(r.lunch) : "–"}</td>
+                    {!admins && <td className="p-3 text-right tabular-nums" style={{ color: COLORS.textDim }}>{r.lunch ? fmtHours(r.lunch) : "–"}</td>}
                     <td className="p-3 text-right tabular-nums" style={{ color: COLORS.textDim }}>{r.planned ? fmtHours(r.planned) : "–"}</td>
                     <td className="p-3 text-right tabular-nums" style={{ color: !r.planned ? COLORS.textDim : diff >= 0 ? COLORS.accent2 : COLORS.danger }}>{r.planned ? (diff >= 0 ? "+" : "") + fmtHours(diff) : "–"}</td>
                   </tr>
                   {r.warnings.length > 0 && (
-                    <tr><td colSpan={7} className="px-3 pb-2 text-[11px]" style={{ color: COLORS.warn }}>{r.warnings.join(" · ")}</td></tr>
+                    <tr><td colSpan={admins ? 6 : 7} className="px-3 pb-2 text-[11px]" style={{ color: COLORS.warn }}>{r.warnings.join(" · ")}</td></tr>
                   )}
                 </React.Fragment>
               );
@@ -1348,13 +1349,13 @@ function MonthView({ S, mode = "staff" }) {
               <td className="p-3 font-medium">Gesamt</td><td></td>
               <td className="p-3 text-right tabular-nums font-semibold" style={{ color: COLORS.accent }}>{fmtHours(total)}</td>
               <td className="hidden sm:table-cell"></td>
-              <td className="p-3 text-right tabular-nums" style={{ color: COLORS.textDim }}>{fmtHours(rows.reduce((s, r) => s + r.lunch, 0))}</td>
+              {!admins && <td className="p-3 text-right tabular-nums" style={{ color: COLORS.textDim }}>{fmtHours(rows.reduce((s, r) => s + r.lunch, 0))}</td>}
               <td colSpan={2}></td>
             </tr>
           </tbody>
         </table>
       </Panel>
-      <p className="text-[11px] mt-2" style={{ color: COLORS.textDim }}>Stunden als Dezimalzahl (7,50 = 7 h 30 min). Netto = nach Abzug der Pausen und der automatischen Mittagspause{S.lunch && S.lunch.enabled ? ` (${S.lunch.minutes} Min ab ${String(S.lunch.minHours).replace(".", ",")} h Arbeit, gestempelte Pausen werden angerechnet)` : " (ausgeschaltet)"}. CSV öffnet direkt in Excel.</p>
+      <p className="text-[11px] mt-2" style={{ color: COLORS.textDim }}>Stunden als Dezimalzahl (7,50 = 7 h 30 min). Netto = nach Abzug der Pausen{admins ? " (keine automatische Mittagspause bei Admin-Zeiten)" : " und der automatischen Mittagspause"}{admins ? "" : S.lunch && S.lunch.enabled ? ` (${S.lunch.minutes} Min ab ${String(S.lunch.minHours).replace(".", ",")} h Arbeit, gestempelte Pausen werden angerechnet)` : " (ausgeschaltet)"}. CSV öffnet direkt in Excel.</p>
     </div>
   );
 }
@@ -1539,7 +1540,7 @@ function SettingsView({ S, act }) {
       </Panel>
       <Panel className="sm:col-span-2">
         <h3 className="text-sm font-medium mb-1">🍽 Automatische Mittagspause</h3>
-        <p className="text-xs mb-3" style={{ color: COLORS.textDim }}>Wird pro Tag automatisch abgezogen, sobald jemand länger als die Mindest-Arbeitszeit gearbeitet hat. Selbst gestempelte Pausen werden angerechnet (wer 20 Min Pause stempelt, bekommt noch 40 Min abgezogen). Gilt für Mitarbeiter und Admins und wird in der Auswertung separat ausgewiesen.</p>
+        <p className="text-xs mb-3" style={{ color: COLORS.textDim }}>Wird pro Tag automatisch abgezogen, sobald jemand länger als die Mindest-Arbeitszeit gearbeitet hat. Selbst gestempelte Pausen werden angerechnet (wer 20 Min Pause stempelt, bekommt noch 40 Min abgezogen). Gilt nur für Mitarbeiter (nicht für Admin-Zeiten) und wird in der Auswertung separat ausgewiesen.</p>
         <label className="flex items-center gap-2 text-sm mb-3">
           <input type="checkbox" checked={!!lunch.enabled} onChange={(e) => setLunch({ ...lunch, enabled: e.target.checked })} /> Automatisch abziehen
         </label>
