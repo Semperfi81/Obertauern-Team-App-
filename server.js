@@ -14,6 +14,9 @@ const TZ = "Europe/Vienna";
 // Startwerte, danach vom Admin in der App unter Auswertung → Einstellungen änderbar
 const DEFAULT_LOCATIONS = ["Haupt", "Grünwaldkopf"];
 const DEFAULT_AREAS = ["Skiverleih", "Alpine Mini Market", "Allgemein"];
+// Automatische Mittagspause: wird pro Tag abgezogen, sobald mehr als minHours gearbeitet wurde.
+// Selbst gestempelte Pausen werden darauf angerechnet.
+const DEFAULT_LUNCH = { enabled: true, minutes: 60, minHours: 6 };
 const LOCS = () => data.settings.locations;
 const AREAS = () => data.settings.areas;
 
@@ -32,7 +35,7 @@ function emptyData() {
   return {
     admins: [], employees: [], timeEntries: [], todos: [], tasks: [],
     shifts: [], checklistTemplates: [], checklistRuns: [], sessions: [], messages: [], pushSubs: [],
-    settings: { locations: DEFAULT_LOCATIONS.slice(), areas: DEFAULT_AREAS.slice() },
+    settings: { locations: DEFAULT_LOCATIONS.slice(), areas: DEFAULT_AREAS.slice(), lunch: { ...DEFAULT_LUNCH } },
   };
 }
 
@@ -53,6 +56,7 @@ function normalize(d) {
   if (!d.settings || typeof d.settings !== "object") d.settings = {};
   if (!Array.isArray(d.settings.locations) || !d.settings.locations.length) d.settings.locations = DEFAULT_LOCATIONS.slice();
   if (!Array.isArray(d.settings.areas) || !d.settings.areas.length) d.settings.areas = DEFAULT_AREAS.slice();
+  if (!d.settings.lunch) d.settings.lunch = { ...DEFAULT_LUNCH };
   // Einmalig: alte Sommer-Beispiellisten (E-Bike, Funpark, Footgolf) entfernen
   if (!d.settings.winter2026) {
     const old = ["E-Bike Verleih öffnen", "E-Bike Verleih schließen", "Funpark Kontrolle", "Footgolf Platzrunde"];
@@ -256,7 +260,7 @@ function runningEntry(employeeId) {
 // ---------------------------------------------------------------------------
 app.get("/api/state", (req, res) => {
   const { admin, employee } = getAuth(req);
-  const base = { locations: LOCS(), areas: AREAS(), today: localDate(), adminCount: data.admins.length };
+  const base = { locations: LOCS(), areas: AREAS(), lunch: data.settings.lunch, today: localDate(), adminCount: data.admins.length };
   if (!admin && !employee) {
     // Nicht angemeldet: nur Namen für die Login-Auswahl
     return res.json({
@@ -874,6 +878,14 @@ app.put("/api/settings", requireAdmin, (req, res) => {
     const a = cleanList(b.areas);
     if (!a.length) return res.status(400).json({ error: "Mindestens ein Bereich nötig." });
     data.settings.areas = a;
+  }
+  if (b.lunch !== undefined && b.lunch && typeof b.lunch === "object") {
+    const m = Math.round(Number(b.lunch.minutes)), h = Number(b.lunch.minHours);
+    data.settings.lunch = {
+      enabled: !!b.lunch.enabled,
+      minutes: isNaN(m) ? 60 : Math.max(0, Math.min(180, m)),
+      minHours: isNaN(h) ? 6 : Math.max(0, Math.min(16, h)),
+    };
   }
   persist();
   res.json(data.settings);
