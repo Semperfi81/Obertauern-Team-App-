@@ -17,6 +17,8 @@ const DEFAULT_AREAS = ["Skiverleih", "Alpine Mini Market", "Allgemein"];
 // Automatische Mittagspause: wird pro Tag abgezogen, sobald mehr als minHours gearbeitet wurde.
 // Selbst gestempelte Pausen werden darauf angerechnet.
 const DEFAULT_LUNCH = { enabled: true, minutes: 60, minHours: 6 };
+// Automatische Erinnerung "Noch eingestempelt?" zu dieser Uhrzeit (Wiener Zeit)
+const DEFAULT_CLOCKOUT = { enabled: true, time: "20:00" };
 const LOCS = () => data.settings.locations;
 const AREAS = () => data.settings.areas;
 
@@ -35,6 +37,7 @@ function emptyData() {
   return {
     admins: [], employees: [], timeEntries: [], todos: [], tasks: [],
     shifts: [], checklistTemplates: [], checklistRuns: [], sessions: [], messages: [], pushSubs: [],
+    reminders: [], absences: [],
     settings: { locations: DEFAULT_LOCATIONS.slice(), areas: DEFAULT_AREAS.slice(), lunch: { ...DEFAULT_LUNCH } },
   };
 }
@@ -57,6 +60,7 @@ function normalize(d) {
   if (!Array.isArray(d.settings.locations) || !d.settings.locations.length) d.settings.locations = DEFAULT_LOCATIONS.slice();
   if (!Array.isArray(d.settings.areas) || !d.settings.areas.length) d.settings.areas = DEFAULT_AREAS.slice();
   if (!d.settings.lunch) d.settings.lunch = { ...DEFAULT_LUNCH };
+  if (!d.settings.clockout) d.settings.clockout = { ...DEFAULT_CLOCKOUT };
   // Einmalig: alte Sommer-Beispiellisten (E-Bike, Funpark, Footgolf) entfernen
   if (!d.settings.winter2026) {
     const old = ["E-Bike Verleih öffnen", "E-Bike Verleih schließen", "Funpark Kontrolle", "Footgolf Platzrunde"];
@@ -261,7 +265,7 @@ function runningEntry(employeeId) {
 // ---------------------------------------------------------------------------
 app.get("/api/state", (req, res) => {
   const { admin, employee } = getAuth(req);
-  const base = { locations: LOCS(), areas: AREAS(), lunch: data.settings.lunch, today: localDate(), adminCount: data.admins.length };
+  const base = { locations: LOCS(), areas: AREAS(), lunch: data.settings.lunch, clockout: data.settings.clockout, today: localDate(), adminCount: data.admins.length };
   if (!admin && !employee) {
     // Nicht angemeldet: nur Namen für die Login-Auswahl
     return res.json({
@@ -289,6 +293,11 @@ app.get("/api/state", (req, res) => {
     checklistTemplates: data.checklistTemplates,
     checklistRuns: data.checklistRuns.filter((r) => r.date >= localDate(Date.now() - 14 * 864e5)),
     messages: data.messages.slice(-200),
+    reminders: data.reminders.filter((r) => canSeeReminder(r, admin, employee)),
+    absences: admin ? data.absences : data.absences
+      .filter((a) => a.employeeId === employee.id || a.status === "genehmigt")
+      // Bei Kollegen nur "abwesend" anzeigen – Grund (z. B. krank) bleibt privat
+      .map((a) => (a.employeeId === employee.id ? a : { id: a.id, employeeId: a.employeeId, from: a.from, to: a.to, type: "abwesend", status: a.status })),
   });
 });
 
@@ -459,6 +468,8 @@ app.delete("/api/employees/:id", requireAdmin, (req, res) => {
   data.shifts = data.shifts.filter((s) => s.employeeId !== id);
   data.sessions = data.sessions.filter((x) => x.employeeId !== id);
   data.pushSubs = data.pushSubs.filter((x) => x.ownerId !== id);
+  data.absences = data.absences.filter((x) => x.employeeId !== id);
+  data.reminders = data.reminders.filter((x) => x.createdBy !== id && x.target !== id);
   data.tasks = data.tasks.map((t) => (t.employeeId === id ? { ...t, employeeId: null } : t));
   persist();
   res.json({ ok: true });
@@ -707,6 +718,8 @@ app.patch("/api/checklists/templates/:id", requireAdmin, (req, res) => {
 });
 
 app.delete("/api/checklists/templates/:id", requireAdmin, (req, res) => {
+  const runPhotos = data.checklistRuns.filter((r) => r.templateId === req.params.id).flatMap((r) => Object.values(r.checks || {}).map((c) => c.photo).filter(Boolean));
+  deletePhotos(runPhotos).catch(() => {});
   data.checklistTemplates = data.checklistTemplates.filter((t) => t.id !== req.params.id);
   data.checklistRuns = data.checklistRuns.filter((r) => r.templateId !== req.params.id);
   persist();
@@ -723,10 +736,28 @@ app.post("/api/checklists/check", requireUser, (req, res) => {
   const who = req.auth.employee ? { by: req.auth.employee.id, byName: req.auth.employee.name } : { by: null, byName: req.auth.admin.name };
   let run = data.checklistRuns.find((r) => r.templateId === templateId && r.date === date);
   if (!run) { run = { id: uid(), templateId, date, checks: {} }; data.checklistRuns.push(run); }
-  if (run.checks[item]) delete run.checks[item];
+  if (run.checks[item]) { const old = run.checks[item].photo; delete run.checks[item]; if (old) deletePhotos([old]).catch(() => {}); }
   else run.checks[item] = { ...who, at: Date.now() };
   persist();
   res.json(run);
+});
+
+// Punkt mit Foto als Nachweis abhaken (ersetzt ein evtl. vorhandenes Foto)
+app.post("/api/checklists/photo", requireUser, async (req, res) => {
+  const { templateId, item, dataUrl } = req.body || {};
+  const date = isDate((req.body || {}).date) ? req.body.date : localDate();
+  const tpl = data.checklistTemplates.find((t) => t.id === templateId);
+  if (!tpl || !tpl.items.includes(item)) return res.status(400).json({ error: "Checkliste oder Punkt nicht gefunden." });
+  let photo;
+  try { photo = await savePhoto(dataUrl); } catch (e) { return res.status(400).json({ error: e.message }); }
+  const who = req.auth.employee ? { by: req.auth.employee.id, byName: req.auth.employee.name } : { by: null, byName: req.auth.admin.name };
+  let run = data.checklistRuns.find((r) => r.templateId === templateId && r.date === date);
+  if (!run) { run = { id: uid(), templateId, date, checks: {} }; data.checklistRuns.push(run); }
+  const old = run.checks[item] && run.checks[item].photo;
+  run.checks[item] = { ...who, at: Date.now(), photo };
+  persist();
+  res.json(run);
+  if (old) deletePhotos([old]).catch(() => {});
 });
 
 // ---------------------------------------------------------------------------
@@ -882,6 +913,9 @@ app.put("/api/settings", requireAdmin, (req, res) => {
     if (!a.length) return res.status(400).json({ error: "Mindestens ein Bereich nötig." });
     data.settings.areas = a;
   }
+  if (b.clockout !== undefined && b.clockout && typeof b.clockout === "object") {
+    data.settings.clockout = { enabled: !!b.clockout.enabled, time: isTime(b.clockout.time) ? b.clockout.time : "20:00" };
+  }
   if (b.lunch !== undefined && b.lunch && typeof b.lunch === "object") {
     const m = Math.round(Number(b.lunch.minutes)), h = Number(b.lunch.minHours);
     data.settings.lunch = {
@@ -976,6 +1010,211 @@ app.delete("/api/tasks/:id/photos/:pid", requireUser, async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// Wiener Zeit-Hilfen (Server läuft in UTC)
+// ---------------------------------------------------------------------------
+function viennaParts(ms) {
+  const p = Object.fromEntries(new Intl.DateTimeFormat("en-GB", { timeZone: TZ, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", weekday: "short", hourCycle: "h23" }).formatToParts(new Date(ms)).map((x) => [x.type, x.value]));
+  return { date: `${p.year}-${p.month}-${p.day}`, hm: `${p.hour}:${p.minute}`, weekday: p.weekday };
+}
+function viennaToMs(date, hm) {
+  const [y, m, d] = date.split("-").map(Number), [h, mi] = hm.split(":").map(Number);
+  let guess = Date.UTC(y, m - 1, d, h, mi);
+  for (let i = 0; i < 2; i++) {
+    const v = viennaParts(guess);
+    const [vy, vm, vd] = v.date.split("-").map(Number), [vh, vmi] = v.hm.split(":").map(Number);
+    guess -= Date.UTC(vy, vm - 1, vd, vh, vmi) - Date.UTC(y, m - 1, d, h, mi);
+  }
+  return guess;
+}
+function addDaysISO(iso, n) { const d = new Date(iso + "T12:00:00Z"); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); }
+const fmtDE = (iso) => iso.split("-").reverse().slice(0, 2).join(".") + ".";
+
+// ---------------------------------------------------------------------------
+// Erinnerungen (Push mit Ton zur eingestellten Zeit, optional wiederholend)
+// ---------------------------------------------------------------------------
+const REPEATS = ["none", "daily", "weekdays", "weekly"];
+function canSeeReminder(r, admin, employee) {
+  if (admin) return true;
+  return r.createdBy === employee.id || r.target === "all" || r.target === employee.id || (r.target === "self" && r.createdBy === employee.id);
+}
+function reminderRecipients(r) {
+  if (r.target === "self") return [r.createdBy];
+  if (r.target === "all") return [...data.employees.filter((e) => e.active !== false).map((e) => e.id), ...data.admins.map((a) => "admin:" + a.id)];
+  return [r.target];
+}
+function nextOccurrence(r, fromMs) {
+  if (r.repeat === "none") { const at = viennaToMs(r.date, r.time); return at > fromMs ? at : null; }
+  let date = r.date;
+  for (let i = 0; i < 400; i++) {
+    const at = viennaToMs(date, r.time);
+    const wd = viennaParts(at).weekday;
+    const ok = r.repeat === "weekdays" ? !["Sat", "Sun"].includes(wd) : true;
+    if (at > fromMs && ok) return at;
+    date = addDaysISO(date, r.repeat === "weekly" ? 7 : 1);
+  }
+  return null;
+}
+function reminderFromBody(b, auth, existing) {
+  const r = existing ? { ...existing } : { id: uid(), createdAt: Date.now(), createdBy: ownerOf(auth), createdByName: auth.employee ? auth.employee.name : auth.admin.name, lastFiredAt: null };
+  if (b.text !== undefined) r.text = str(b.text, 300);
+  if (b.date !== undefined) r.date = b.date;
+  if (b.time !== undefined) r.time = b.time;
+  if (b.repeat !== undefined) r.repeat = REPEATS.includes(b.repeat) ? b.repeat : "none";
+  if (b.target !== undefined) r.target = b.target;
+  if (b.taskId !== undefined) r.taskId = data.tasks.some((t) => t.id === b.taskId) ? b.taskId : null;
+  if (!r.repeat) r.repeat = "none";
+  if (!r.text) return { error: "Bitte einen Text eingeben." };
+  if (!isDate(r.date) || !isTime(r.time)) return { error: "Datum und Uhrzeit angeben." };
+  // Mitarbeiter: nur für sich selbst. Admins: für sich, eine Person oder alle
+  if (auth.employee) r.target = "self";
+  else if (!(r.target === "self" || r.target === "all" || data.employees.some((e) => e.id === r.target))) r.target = "self";
+  r.nextAt = nextOccurrence(r, Date.now() - 60000);
+  r.active = r.nextAt !== null;
+  if (!r.active) return { error: "Der Zeitpunkt liegt in der Vergangenheit." };
+  return r;
+}
+function canEditReminder(r, auth) { return !!auth.admin || r.createdBy === ownerOf(auth); }
+
+app.post("/api/reminders", requireUser, (req, res) => {
+  const r = reminderFromBody(req.body || {}, req.auth, null);
+  if (r.error) return res.status(400).json(r);
+  data.reminders.push(r);
+  persist();
+  res.json(r);
+});
+app.patch("/api/reminders/:id", requireUser, (req, res) => {
+  const i = data.reminders.findIndex((x) => x.id === req.params.id);
+  if (i < 0 || !canEditReminder(data.reminders[i], req.auth)) return res.status(404).json({ error: "Nicht gefunden." });
+  const r = reminderFromBody(req.body || {}, req.auth, data.reminders[i]);
+  if (r.error) return res.status(400).json(r);
+  data.reminders[i] = r;
+  persist();
+  res.json(r);
+});
+app.delete("/api/reminders/:id", requireUser, (req, res) => {
+  const r = data.reminders.find((x) => x.id === req.params.id);
+  if (!r || !canEditReminder(r, req.auth)) return res.status(404).json({ error: "Nicht gefunden." });
+  data.reminders = data.reminders.filter((x) => x.id !== r.id);
+  persist();
+  res.json({ ok: true });
+});
+
+function fireReminder(r, now) {
+  const rec = new Set(reminderRecipients(r));
+  const task = r.taskId ? data.tasks.find((t) => t.id === r.taskId) : null;
+  pushTo((s) => rec.has(s.ownerId) && ownerActive(s.ownerId), {
+    title: "⏰ Erinnerung" + (r.target === "all" ? " (an alle)" : ""), body: r.text + (task ? " · 📋 " + task.title : ""),
+    tag: "rem-" + r.id + "-" + now, url: "/?tab=" + (task ? "aufgaben" : "zeit") + "&reminder=" + r.id, alarm: true,
+  }).catch(() => {});
+  r.lastFiredAt = now;
+  if (r.repeat === "none") { r.active = false; r.nextAt = null; }
+  else { r.nextAt = nextOccurrence(r, now + 1000); r.active = r.nextAt !== null; }
+}
+
+// ---------------------------------------------------------------------------
+// Zeitplaner: Erinnerungen + "Noch eingestempelt?" (läuft alle 30 Sekunden)
+// Hinweis: Auf Render Free schläft der Server ohne Aufrufe ein – dann laufen
+// fällige Erinnerungen beim nächsten Aufwachen nach. Dagegen hilft ein
+// externer Ping (z. B. UptimeRobot) auf /api/ping alle 5–10 Minuten.
+// ---------------------------------------------------------------------------
+function schedulerTick() {
+  const now = Date.now();
+  let changed = false;
+  data.reminders.forEach((r) => {
+    if (r.active && r.nextAt && r.nextAt <= now) { fireReminder(r, now); changed = true; }
+  });
+  // alte, erledigte Einmal-Erinnerungen nach 30 Tagen aufräumen
+  const before = data.reminders.length;
+  data.reminders = data.reminders.filter((r) => r.active || !r.lastFiredAt || now - r.lastFiredAt < 30 * 864e5);
+  if (data.reminders.length !== before) changed = true;
+
+  const co = data.settings.clockout;
+  const v = viennaParts(now);
+  if (co && co.enabled && v.hm >= co.time && data.settings.lastClockoutCheck !== v.date) {
+    data.settings.lastClockoutCheck = v.date;
+    changed = true;
+    const open = data.timeEntries.filter((e) => e.end === null);
+    const names = [];
+    open.forEach((e) => {
+      const since = viennaParts(e.start);
+      const label = since.date === v.date ? "seit " + since.hm : "seit " + fmtDE(since.date) + " " + since.hm;
+      pushTo((s) => s.ownerId === e.employeeId && ownerActive(s.ownerId), {
+        title: "🕒 Noch eingestempelt?", body: `Du bist ${label} eingestempelt. Bitte ausstempeln, falls du schon fertig bist.`, tag: "clockout-" + e.id, url: "/?tab=zeit", alarm: true,
+      }).catch(() => {});
+      if (!String(e.employeeId).startsWith("admin:")) {
+        const emp = data.employees.find((x) => x.id === e.employeeId);
+        if (emp) names.push(emp.name);
+      }
+    });
+    if (names.length) {
+      pushTo((s) => s.ownerId.startsWith("admin:") && ownerActive(s.ownerId), {
+        title: "🕒 Noch eingestempelt: " + names.length, body: names.join(", "), tag: "clockout-admin-" + v.date, url: "/?tab=zeit",
+      }).catch(() => {});
+    }
+  }
+  if (changed) persist();
+}
+
+app.get("/api/ping", (req, res) => res.json({ ok: true, time: new Date().toISOString() }));
+
+// ---------------------------------------------------------------------------
+// Urlaub & Krankmeldung
+// ---------------------------------------------------------------------------
+const ABS_TYPES = ["urlaub", "krank", "sonstiges"];
+const ABS_LABEL = { urlaub: "🏖 Urlaub", krank: "🤒 Krankmeldung", sonstiges: "📌 Abwesenheit" };
+
+app.post("/api/absences", requireUser, (req, res) => {
+  const b = req.body || {};
+  const { admin, employee } = req.auth;
+  const employeeId = employee ? employee.id : b.employeeId;
+  const emp = data.employees.find((e) => e.id === employeeId);
+  if (!emp) return res.status(400).json({ error: "Mitarbeiter fehlt." });
+  const type = ABS_TYPES.includes(b.type) ? b.type : "urlaub";
+  if (!isDate(b.from) || !isDate(b.to || b.from)) return res.status(400).json({ error: "Zeitraum angeben." });
+  const to = b.to || b.from;
+  if (to < b.from) return res.status(400).json({ error: "Ende muss nach dem Beginn liegen." });
+  const a = {
+    id: uid(), employeeId, type, from: b.from, to, note: str(b.note, 300), createdAt: Date.now(),
+    // Krankmeldungen und Einträge vom Admin gelten sofort, Urlaub muss bestätigt werden
+    status: admin || type === "krank" ? "genehmigt" : "offen",
+    decidedBy: admin ? admin.name : null,
+  };
+  data.absences.push(a);
+  persist();
+  res.json(a);
+  if (employee) {
+    pushTo((s) => s.ownerId.startsWith("admin:") && ownerActive(s.ownerId), {
+      title: `${ABS_LABEL[type]}${a.status === "offen" ? "santrag" : ""}: ${emp.name}`.replace("Krankmeldungsantrag", "Krankmeldung").replace("Urlaubsantrag", "Urlaubsantrag"),
+      body: `${fmtDE(a.from)}${a.to !== a.from ? " – " + fmtDE(a.to) : ""}${a.note ? " · " + a.note : ""}`, tag: "abs-" + a.id, url: "/?tab=schichten",
+    }).catch(() => {});
+  }
+});
+
+app.patch("/api/absences/:id", requireAdmin, (req, res) => {
+  const a = data.absences.find((x) => x.id === req.params.id);
+  if (!a) return res.status(404).json({ error: "Nicht gefunden." });
+  const st = (req.body || {}).status;
+  if (!["offen", "genehmigt", "abgelehnt"].includes(st)) return res.status(400).json({ error: "Status ungültig." });
+  a.status = st; a.decidedBy = req.admin.name; a.decidedAt = Date.now();
+  persist();
+  res.json(a);
+  if (st !== "offen") notifyEmployee(a.employeeId, {
+    title: st === "genehmigt" ? "✅ " + (a.type === "urlaub" ? "Urlaub genehmigt" : "Abwesenheit bestätigt") : "❌ " + (a.type === "urlaub" ? "Urlaub abgelehnt" : "Abwesenheit abgelehnt"),
+    body: `${fmtDE(a.from)}${a.to !== a.from ? " – " + fmtDE(a.to) : ""} · von ${req.admin.name}`, tag: "abs-" + a.id, url: "/?tab=schichten",
+  });
+});
+
+app.delete("/api/absences/:id", requireUser, (req, res) => {
+  const a = data.absences.find((x) => x.id === req.params.id);
+  if (!a) return res.status(404).json({ error: "Nicht gefunden." });
+  const { admin, employee } = req.auth;
+  if (!admin && (a.employeeId !== employee.id || (a.status !== "offen" && a.type !== "krank"))) return res.status(403).json({ error: "Nur offene eigene Anträge können zurückgezogen werden." });
+  data.absences = data.absences.filter((x) => x.id !== a.id);
+  persist();
+  res.json({ ok: true });
+});
+
+// ---------------------------------------------------------------------------
 // Gruppenchat
 // ---------------------------------------------------------------------------
 const MAX_MESSAGES = 2000;
@@ -1038,6 +1277,8 @@ loadData()
   .then((d) => {
     data = d;
     setupPush();
+    setInterval(() => { try { schedulerTick(); } catch (e) { console.error("Zeitplaner:", e.message); } }, 30000);
+    setTimeout(() => { try { schedulerTick(); } catch (e) {} }, 5000);
     app.listen(PORT, () => console.log(`Team-App läuft auf Port ${PORT} (${pgPool ? "Postgres" : "Datei: " + DATA_FILE})`));
   })
   .catch((e) => {
