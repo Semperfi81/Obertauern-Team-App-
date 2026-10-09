@@ -1,5 +1,5 @@
 // Team-App Service Worker – bei Änderungen am Frontend Versionsnummer erhöhen
-const CACHE_NAME = "team-app-v4";
+const CACHE_NAME = "team-app-v5";
 const PRECACHE = ["/", "/manifest.json", "/icon-192.png", "/icon-512.png"];
 
 self.addEventListener("install", (event) => {
@@ -29,5 +29,35 @@ self.addEventListener("fetch", (event) => {
         return res;
       })
       .catch(() => caches.match(req).then((r) => r || (req.mode === "navigate" ? caches.match("/") : undefined)))
+  );
+});
+
+// Push-Benachrichtigungen anzeigen
+self.addEventListener("push", (event) => {
+  let d = {};
+  try { d = event.data ? event.data.json() : {}; } catch (e) { d = { body: event.data && event.data.text() }; }
+  event.waitUntil(
+    self.registration.showNotification(d.title || "Crew Sport Gefäll", {
+      body: d.body || "",
+      icon: "/icon-192.png",
+      badge: "/icon-192.png",
+      tag: d.tag || undefined,
+      renotify: !!d.tag,
+      data: { url: d.url || "/" },
+    })
+  );
+});
+
+// Tippen auf die Benachrichtigung öffnet die App (bzw. holt sie nach vorne)
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const url = (event.notification.data && event.notification.data.url) || "/";
+  event.waitUntil(
+    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((list) => {
+      for (const c of list) {
+        if ("focus" in c) { c.postMessage({ type: "open", url }); return c.focus(); }
+      }
+      return self.clients.openWindow(url);
+    })
   );
 });

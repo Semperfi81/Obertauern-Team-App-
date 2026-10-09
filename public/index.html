@@ -233,7 +233,10 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [offline, setOffline] = useState(false);
-  const [tab, setTab] = useState("zeit");
+  const [tab, setTab] = useState(() => {
+    const t = new URLSearchParams(location.search).get("tab");
+    return ["zeit", "schichten", "aufgaben", "checklisten", "chat", "admin"].includes(t) ? t : "zeit";
+  });
   const [S, setS] = useState({ role: null, employees: [], timeEntries: [], todos: [], tasks: [], shifts: [], checklistTemplates: [], checklistRuns: [], locations: [], loginEmployees: [] });
   const [token, setTokenState] = useState(() => store.get(TOKEN_KEY));
   const setToken = (t) => { setTokenState(t); store.set(TOKEN_KEY, t); };
@@ -265,6 +268,22 @@ function App() {
 
   const activeEmployees = (S.employees || []).filter((e) => e.active);
 
+  // Tippen auf eine Benachrichtigung bei offener App -> passenden Tab öffnen
+  useEffect(() => {
+    if (!("serviceWorker" in navigator)) return;
+    const h = (ev) => {
+      if (ev.data && ev.data.type === "open") {
+        const t = new URL(ev.data.url, location.origin).searchParams.get("tab");
+        if (t) setTab(t);
+        refresh();
+      }
+    };
+    navigator.serviceWorker.addEventListener("message", h);
+    return () => navigator.serviceWorker.removeEventListener("message", h);
+  }, [refresh]);
+  // Nach Anmeldung vorhandenes Push-Abo dem Benutzer zuordnen
+  useEffect(() => { if (role && token) syncPush(token); }, [role, token]);
+
   // Führt eine Änderung aus und lädt danach neu
   const act = useCallback(async (path, opts = {}) => {
     try {
@@ -285,6 +304,7 @@ function App() {
   }
   async function logout() {
     if (!confirm("Abmelden?")) return;
+    await unlinkPush();
     if (role === "employee") await api("/logout", { method: "POST", token }).catch(() => {});
     setToken(null);
     setS((p) => ({ ...p, role: null, me: null, timeEntries: [], employees: [] }));
@@ -361,6 +381,7 @@ function App() {
           ))}
         </nav>
 
+        {tab === "zeit" && <PushBanner token={token} />}
         {tab === "zeit" && <ZeitTab {...ctx} />}
         {tab === "schichten" && <SchichtTab {...ctx} />}
         {tab === "aufgaben" && <AufgabenTab {...ctx} />}
@@ -1420,7 +1441,7 @@ function chatUnread(S) {
   return (S.messages || []).filter((m) => m.at > last && m.authorId !== S.myAuthorId).length;
 }
 
-function ChatTab({ S, isAdmin, act }) {
+function ChatTab({ S, isAdmin, act, token }) {
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
   const listRef = useRef(null);
@@ -1448,7 +1469,9 @@ function ChatTab({ S, isAdmin, act }) {
 
   let lastDate = "";
   return (
-    <div className="flex flex-col rounded-xl overflow-hidden" style={{ background: COLORS.panel, border: `1px solid ${COLORS.panelBorder}`, height: "calc(100vh - 220px)", minHeight: 360 }}>
+    <>
+    <PushBanner token={token} compact />
+    <div className="flex flex-col rounded-xl overflow-hidden" style={{ background: COLORS.panel, border: `1px solid ${COLORS.panelBorder}`, height: "calc(100vh - 270px)", minHeight: 360 }}>
       <div className="px-4 py-2.5 text-sm font-medium flex items-center justify-between" style={{ borderBottom: `1px solid ${COLORS.panelBorder}` }}>
         <span>💬 Team-Chat</span>
         <span className="text-xs" style={{ color: COLORS.textDim }}>{S.employees.filter((e) => e.active).length} Mitarbeiter</span>
@@ -1485,6 +1508,106 @@ function ChatTab({ S, isAdmin, act }) {
           onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
           className="flex-1 px-3 py-2 rounded-lg resize-none" style={{ ...inputStyle, maxHeight: 120 }} />
         <Btn onClick={send} disabled={!text.trim() || sending} className="px-4">➤</Btn>
+      </div>
+    </div>
+    </>
+  );
+}
+
+// =====================================================================
+// PUSH-BENACHRICHTIGUNGEN
+// =====================================================================
+const isIOS = () => /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+const isStandalone = () => window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true;
+const pushSupported = () => "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+function b64ToBytes(b64) {
+  const pad = "=".repeat((4 - (b64.length % 4)) % 4);
+  const raw = atob((b64 + pad).replace(/-/g, "+").replace(/_/g, "/"));
+  return Uint8Array.from(raw, (c) => c.charCodeAt(0));
+}
+async function currentSub() {
+  if (!pushSupported()) return null;
+  const reg = await navigator.serviceWorker.getRegistration();
+  return reg ? reg.pushManager.getSubscription() : null;
+}
+// Abo anlegen (fragt ggf. nach Erlaubnis) und beim Server speichern
+async function enablePush(token) {
+  if (!pushSupported()) throw new Error("Dieses Gerät/dieser Browser unterstützt keine Benachrichtigungen.");
+  const perm = await Notification.requestPermission();
+  if (perm !== "granted") throw new Error("Benachrichtigungen wurden nicht erlaubt.");
+  const { publicKey } = await api("/push/key");
+  if (!publicKey) throw new Error("Server unterstützt noch keine Benachrichtigungen.");
+  const reg = await navigator.serviceWorker.register("/service-worker.js").then(() => navigator.serviceWorker.ready);
+  let sub = await reg.pushManager.getSubscription();
+  if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToBytes(publicKey) });
+  await api("/push/subscribe", { method: "POST", token, body: { subscription: sub.toJSON() } });
+  return true;
+}
+// Nach dem Login: vorhandenes Abo dem angemeldeten Benutzer zuordnen
+async function syncPush(token) {
+  try {
+    if (!pushSupported() || Notification.permission !== "granted") return false;
+    const sub = await currentSub();
+    if (!sub) return false;
+    await api("/push/subscribe", { method: "POST", token, body: { subscription: sub.toJSON() } });
+    return true;
+  } catch (e) { return false; }
+}
+async function unlinkPush() {
+  try { const sub = await currentSub(); if (sub) await api("/push/unsubscribe", { method: "POST", body: { endpoint: sub.endpoint } }); } catch (e) {}
+}
+
+function PushBanner({ token, compact }) {
+  const [state, setState] = useState("checking"); // checking | on | off | denied | ios | unsupported
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState("");
+  const [hidden, setHidden] = useState(() => { try { return localStorage.getItem("team-app-push-hide") === "1"; } catch (e) { return false; } });
+  useEffect(() => {
+    (async () => {
+      if (isIOS() && !isStandalone()) return setState("ios");
+      if (!pushSupported()) return setState("unsupported");
+      if (Notification.permission === "denied") return setState("denied");
+      const sub = await currentSub().catch(() => null);
+      setState(sub && Notification.permission === "granted" ? "on" : "off");
+    })();
+  }, []);
+  async function turnOn() {
+    setBusy(true); setMsg("");
+    try { await enablePush(token); setState("on"); setMsg("Aktiviert ✓"); }
+    catch (e) { setMsg(e.message); if (Notification.permission === "denied") setState("denied"); }
+    setBusy(false);
+  }
+  async function test() {
+    setMsg("");
+    try { const r = await api("/push/test", { method: "POST", token }); setMsg(r.sent ? "Test gesendet – kommt gleich ✓" : "Kein Abo gefunden – bitte neu aktivieren."); if (!r.sent) setState("off"); }
+    catch (e) { setMsg(e.message); }
+  }
+  if (state === "checking") return null;
+  if (state === "on") {
+    if (!compact) return null;
+    return (
+      <div className="flex items-center justify-between gap-2 mb-3 text-xs px-3 py-2 rounded-lg" style={{ background: COLORS.accent2 + "15", color: COLORS.accent2 }}>
+        <span>🔔 Benachrichtigungen aktiv {msg && <span style={{ color: COLORS.textDim }}>· {msg}</span>}</span>
+        <button onClick={test} className="underline">Test</button>
+      </div>
+    );
+  }
+  if (hidden && !compact) return null;
+  const box = (children) => (
+    <div className="mb-3 px-3 py-2.5 rounded-lg text-xs" style={{ background: COLORS.accent + "15", border: `1px solid ${COLORS.accent}55`, color: COLORS.text }}>
+      {children}
+      {msg && <p className="mt-1" style={{ color: COLORS.warn }}>{msg}</p>}
+    </div>
+  );
+  if (state === "ios") return box(<><b>🔔 Benachrichtigungen am iPhone:</b> Öffne die App über das Teilen-Symbol <b>⎋ → „Zum Home-Bildschirm“</b> und starte sie dann vom Home-Bildschirm. Danach kannst du sie hier aktivieren.</>);
+  if (state === "unsupported") return compact ? box(<>Dieser Browser unterstützt keine Benachrichtigungen. Tipp: Chrome (Android) oder die installierte App am iPhone verwenden.</>) : null;
+  if (state === "denied") return box(<><b>🔕 Benachrichtigungen blockiert.</b> Erlaube sie in den Browser-/Handy-Einstellungen für diese Seite und lade die App neu.</>);
+  return box(
+    <div className="flex items-center justify-between gap-3">
+      <span><b>🔔 Benachrichtigungen aktivieren</b><br /><span style={{ color: COLORS.textDim }}>Bei neuen Chat-Nachrichten, Schichten und Aufgaben.</span></span>
+      <div className="flex items-center gap-2 flex-shrink-0">
+        {!compact && <button onClick={() => { setHidden(true); try { localStorage.setItem("team-app-push-hide", "1"); } catch (e) {} }} style={{ color: COLORS.textDim }} title="Ausblenden">✕</button>}
+        <Btn onClick={turnOn} disabled={busy} className="text-xs py-1.5">Aktivieren</Btn>
       </div>
     </div>
   );
