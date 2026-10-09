@@ -6,7 +6,7 @@ let webpush = null;
 try { webpush = require("web-push"); } catch (e) { console.warn("web-push nicht installiert – keine Push-Benachrichtigungen."); }
 
 const app = express();
-app.use(express.json({ limit: "1mb" }));
+app.use(express.json({ limit: "12mb" })); // Fotos kommen als Base64
 
 const MAX_ADMINS = 5;
 const TZ = "Europe/Vienna";
@@ -87,6 +87,7 @@ async function loadData() {
       ssl: process.env.PGSSL === "false" ? false : { rejectUnauthorized: false },
     });
     await pgPool.query("CREATE TABLE IF NOT EXISTS app_state (id INT PRIMARY KEY, data JSONB NOT NULL, updated_at TIMESTAMPTZ DEFAULT now())");
+    await pgPool.query("CREATE TABLE IF NOT EXISTS photos (id TEXT PRIMARY KEY, mime TEXT NOT NULL, data BYTEA NOT NULL, created TIMESTAMPTZ DEFAULT now())");
     const r = await pgPool.query("SELECT data FROM app_state WHERE id = 1");
     if (r.rows.length) return normalize(r.rows[0].data);
     // Erste Verbindung: vorhandene data.json übernehmen, falls da
@@ -668,9 +669,11 @@ app.patch("/api/tasks/:id/move", requireUser, (req, res) => {
 });
 
 app.delete("/api/tasks/:id", requireAdmin, (req, res) => {
+  const task = data.tasks.find((t) => t.id === req.params.id);
   data.tasks = data.tasks.filter((t) => t.id !== req.params.id);
   persist();
   res.json({ ok: true });
+  if (task) deletePhotos((task.photos || []).map((p) => p.id)).catch(() => {});
 });
 
 // ---------------------------------------------------------------------------
@@ -892,26 +895,115 @@ app.put("/api/settings", requireAdmin, (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// Fotos – getrennt vom restlichen Datenbestand gespeichert (Postgres-Tabelle
+// "photos" bzw. Ordner DATA_DIR/photos), damit die App schnell bleibt.
+// Fotos werden im Browser vorher verkleinert (max. 1600 px, JPEG).
+// ---------------------------------------------------------------------------
+const PHOTO_DIR = path.join(DATA_DIR, "photos");
+const MAX_PHOTO_BYTES = 4 * 1024 * 1024;
+const photoId = () => crypto.randomBytes(16).toString("hex");
+
+function parseDataUrl(u) {
+  const m = /^data:(image\/(jpeg|png|webp));base64,([A-Za-z0-9+/=]+)$/.exec(String(u || ""));
+  if (!m) return null;
+  const buf = Buffer.from(m[3], "base64");
+  if (!buf.length || buf.length > MAX_PHOTO_BYTES) return null;
+  return { mime: m[1], buf };
+}
+async function savePhoto(dataUrl) {
+  const p = parseDataUrl(dataUrl);
+  if (!p) throw new Error("Foto ungültig oder zu groß (max. 4 MB).");
+  const id = photoId();
+  if (pgPool) await pgPool.query("INSERT INTO photos (id, mime, data) VALUES ($1, $2, $3)", [id, p.mime, p.buf]);
+  else { fs.mkdirSync(PHOTO_DIR, { recursive: true }); fs.writeFileSync(path.join(PHOTO_DIR, id), JSON.stringify({ mime: p.mime, data: p.buf.toString("base64") })); }
+  return id;
+}
+async function loadPhoto(id) {
+  if (!/^[0-9a-f]{32}$/.test(id)) return null;
+  if (pgPool) { const r = await pgPool.query("SELECT mime, data FROM photos WHERE id = $1", [id]); return r.rows[0] ? { mime: r.rows[0].mime, buf: r.rows[0].data } : null; }
+  const f = path.join(PHOTO_DIR, id);
+  if (!fs.existsSync(f)) return null;
+  const j = JSON.parse(fs.readFileSync(f, "utf8"));
+  return { mime: j.mime, buf: Buffer.from(j.data, "base64") };
+}
+async function deletePhotos(ids) {
+  for (const id of ids || []) {
+    if (!/^[0-9a-f]{32}$/.test(id)) continue;
+    try {
+      if (pgPool) await pgPool.query("DELETE FROM photos WHERE id = $1", [id]);
+      else fs.rmSync(path.join(PHOTO_DIR, id), { force: true });
+    } catch (e) { console.warn("Foto löschen fehlgeschlagen:", e.message); }
+  }
+}
+
+// Foto abrufen (nur angemeldet; IDs sind zufällig und nicht erratbar)
+app.get("/api/photos/:id", requireUser, async (req, res) => {
+  try {
+    const p = await loadPhoto(req.params.id);
+    if (!p) return res.status(404).json({ error: "Foto nicht gefunden." });
+    res.setHeader("Content-Type", p.mime);
+    res.setHeader("Cache-Control", "private, max-age=31536000, immutable");
+    res.end(p.buf);
+  } catch (e) { res.status(500).json({ error: "Foto konnte nicht geladen werden." }); }
+});
+
+// Foto zu einer Aufgabe hinzufügen / entfernen
+app.post("/api/tasks/:id/photos", requireUser, async (req, res) => {
+  const task = data.tasks.find((t) => t.id === req.params.id);
+  if (!task || (req.auth.employee && !canSeeTask(task, req.auth.employee))) return res.status(404).json({ error: "Nicht gefunden." });
+  if ((task.photos || []).length >= 20) return res.status(400).json({ error: "Maximal 20 Fotos pro Aufgabe." });
+  try {
+    const id = await savePhoto((req.body || {}).dataUrl);
+    const { admin, employee } = req.auth;
+    task.photos = task.photos || [];
+    task.photos.push({ id, at: Date.now(), byName: employee ? employee.name : admin.name, by: employee ? employee.id : "admin:" + admin.id });
+    persist();
+    res.json(task);
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+app.delete("/api/tasks/:id/photos/:pid", requireUser, async (req, res) => {
+  const task = data.tasks.find((t) => t.id === req.params.id);
+  if (!task || (req.auth.employee && !canSeeTask(task, req.auth.employee))) return res.status(404).json({ error: "Nicht gefunden." });
+  const ph = (task.photos || []).find((p) => p.id === req.params.pid);
+  if (!ph) return res.status(404).json({ error: "Foto nicht gefunden." });
+  const { admin, employee } = req.auth;
+  if (!admin && ph.by !== employee.id) return res.status(403).json({ error: "Nur eigene Fotos löschbar." });
+  task.photos = task.photos.filter((p) => p.id !== ph.id);
+  persist();
+  await deletePhotos([ph.id]);
+  res.json(task);
+});
+
+// ---------------------------------------------------------------------------
 // Gruppenchat
 // ---------------------------------------------------------------------------
 const MAX_MESSAGES = 2000;
 
-app.post("/api/chat", requireUser, (req, res) => {
+app.post("/api/chat", requireUser, async (req, res) => {
   const text = str((req.body || {}).text, 2000);
-  if (!text) return res.status(400).json({ error: "Nachricht ist leer." });
+  const images = Array.isArray((req.body || {}).photos) ? req.body.photos.slice(0, 4) : [];
+  if (!text && !images.length) return res.status(400).json({ error: "Nachricht ist leer." });
+  let photos = [];
+  try { for (const u of images) photos.push(await savePhoto(u)); }
+  catch (e) { await deletePhotos(photos); return res.status(400).json({ error: e.message }); }
   const { admin, employee } = req.auth;
   const msg = {
-    id: uid(), text, at: Date.now(),
+    id: uid(), text, photos, at: Date.now(),
     authorId: employee ? employee.id : "admin:" + admin.id,
     authorName: employee ? employee.name : admin.name,
     isAdmin: !!admin,
   };
   data.messages.push(msg);
-  if (data.messages.length > MAX_MESSAGES) data.messages = data.messages.slice(-MAX_MESSAGES);
+  if (data.messages.length > MAX_MESSAGES) {
+    const old = data.messages.slice(0, data.messages.length - MAX_MESSAGES);
+    data.messages = data.messages.slice(-MAX_MESSAGES);
+    deletePhotos(old.flatMap((m) => m.photos || [])).catch(() => {});
+  }
   persist();
   res.json(msg);
   pushTo((s) => s.ownerId !== msg.authorId && ownerActive(s.ownerId), {
-    title: "💬 " + msg.authorName, body: text.length > 140 ? text.slice(0, 137) + "…" : text, tag: "chat", url: "/?tab=chat",
+    title: "💬 " + msg.authorName, body: (photos.length ? "📷 Foto" + (text ? " · " : "") : "") + (text.length > 140 ? text.slice(0, 137) + "…" : text), tag: "chat", url: "/?tab=chat",
   }).catch(() => {});
 });
 
@@ -924,6 +1016,7 @@ app.delete("/api/chat/:id", requireUser, (req, res) => {
   data.messages = data.messages.filter((m) => m.id !== msg.id);
   persist();
   res.json({ ok: true });
+  deletePhotos(msg.photos).catch(() => {});
 });
 
 // ---------------------------------------------------------------------------
