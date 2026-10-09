@@ -196,6 +196,11 @@ function findEmployeeByToken(token) {
   const emp = data.employees.find((e) => e.id === s.employeeId);
   return emp && emp.active !== false ? emp : null;
 }
+const isAdminEntry = (t) => typeof t.employeeId === "string" && t.employeeId.startsWith("admin:");
+// Admin-Zeiten darf nur der jeweilige Admin selbst sehen/ändern
+function foreignAdminEntry(req, entry) {
+  return isAdminEntry(entry) && entry.employeeId !== "admin:" + req.admin.id;
+}
 function getAuth(req) {
   const token = getToken(req);
   const admin = findAdminByToken(token);
@@ -211,7 +216,10 @@ function requireUser(req, res, next) {
 function targetEmployee(req, res) {
   const { admin, employee } = req.auth;
   if (employee) return employee;
-  const emp = data.employees.find((e) => e.id === (req.body || {}).employeeId);
+  const wanted = (req.body || {}).employeeId;
+  // Admin stempelt für sich selbst (versteckte Admin-Zeiterfassung)
+  if (wanted === "admin:" + admin.id) return { id: wanted, name: admin.name };
+  const emp = data.employees.find((e) => e.id === wanted);
   if (!emp) { res.status(404).json({ error: "Mitarbeiter nicht gefunden." }); return null; }
   return emp;
 }
@@ -263,9 +271,12 @@ app.get("/api/state", (req, res) => {
     adminName: admin ? admin.name : null,
     me: employee ? { id: employee.id, name: employee.name } : null,
     myAuthorId: employee ? employee.id : "admin:" + admin.id,
+    // Admins (für Admin-Zeiterfassung) – nur Admins bekommen diese Liste
+    admins: admin ? [{ id: "admin:" + admin.id, name: admin.name }] : undefined,
     employees: data.employees.map(publicEmployee),
     // Arbeitszeiten: Admin sieht alle, Mitarbeiter nur die eigenen
-    timeEntries: admin ? data.timeEntries : data.timeEntries.filter((t) => t.employeeId === employee.id),
+    // Admin: alle Mitarbeiter-Zeiten + nur die EIGENEN Admin-Zeiten (andere Admins unsichtbar)
+    timeEntries: admin ? data.timeEntries.filter((t) => !isAdminEntry(t) || t.employeeId === "admin:" + admin.id) : data.timeEntries.filter((t) => t.employeeId === employee.id),
     // Aufgaben/To-Dos: Mitarbeiter sehen nur ihre eigenen und die "für alle"
     todos: admin ? data.todos : data.todos.filter((t) => t.employeeId === employee.id),
     tasks: admin ? data.tasks : data.tasks.filter((t) => canSeeTask(t, employee)),
@@ -516,7 +527,9 @@ function parseEntryBody(b, existing) {
 
 app.post("/api/time", requireAdmin, (req, res) => {
   const b = req.body || {};
-  if (!data.employees.some((e) => e.id === b.employeeId)) return res.status(400).json({ error: "Mitarbeiter fehlt." });
+  const isAdminPerson = b.employeeId === "admin:" + req.admin.id;
+  if (typeof b.employeeId === "string" && b.employeeId.startsWith("admin:") && !isAdminPerson) return res.status(403).json({ error: "Admin-Zeiten kann nur der jeweilige Admin selbst eintragen." });
+  if (!isAdminPerson && !data.employees.some((e) => e.id === b.employeeId)) return res.status(400).json({ error: "Mitarbeiter fehlt." });
   const p = parseEntryBody(b, null);
   if (p.error) return res.status(400).json(p);
   const entry = { id: uid(), employeeId: b.employeeId, breaks: [], ...p, editedBy: req.admin.name, editedAt: Date.now() };
@@ -527,7 +540,7 @@ app.post("/api/time", requireAdmin, (req, res) => {
 
 app.patch("/api/time/:id", requireAdmin, (req, res) => {
   const entry = data.timeEntries.find((e) => e.id === req.params.id);
-  if (!entry) return res.status(404).json({ error: "Nicht gefunden." });
+  if (!entry || foreignAdminEntry(req, entry)) return res.status(404).json({ error: "Nicht gefunden." });
   const p = parseEntryBody(req.body || {}, entry);
   if (p.error) return res.status(400).json(p);
   Object.assign(entry, p, { editedBy: req.admin.name, editedAt: Date.now() });
@@ -537,6 +550,8 @@ app.patch("/api/time/:id", requireAdmin, (req, res) => {
 });
 
 app.delete("/api/time/:id", requireAdmin, (req, res) => {
+  const entry = data.timeEntries.find((e) => e.id === req.params.id);
+  if (!entry || foreignAdminEntry(req, entry)) return res.status(404).json({ error: "Nicht gefunden." });
   data.timeEntries = data.timeEntries.filter((e) => e.id !== req.params.id);
   persist();
   res.json({ ok: true });
