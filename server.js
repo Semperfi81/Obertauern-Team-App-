@@ -239,8 +239,9 @@ app.get("/api/state", (req, res) => {
     employees: data.employees.map(publicEmployee),
     // Arbeitszeiten: Admin sieht alle, Mitarbeiter nur die eigenen
     timeEntries: admin ? data.timeEntries : data.timeEntries.filter((t) => t.employeeId === employee.id),
-    todos: data.todos,
-    tasks: data.tasks,
+    // Aufgaben/To-Dos: Mitarbeiter sehen nur ihre eigenen und die "für alle"
+    todos: admin ? data.todos : data.todos.filter((t) => t.employeeId === employee.id),
+    tasks: admin ? data.tasks : data.tasks.filter((t) => canSeeTask(t, employee)),
     shifts: data.shifts,
     checklistTemplates: data.checklistTemplates,
     checklistRuns: data.checklistRuns.filter((r) => r.date >= localDate(Date.now() - 14 * 864e5)),
@@ -488,7 +489,8 @@ app.delete("/api/time/:id", requireAdmin, (req, res) => {
 // To-Dos
 // ---------------------------------------------------------------------------
 app.post("/api/todos", requireUser, (req, res) => {
-  const { employeeId, text, due } = req.body || {};
+  const { text, due } = req.body || {};
+  const employeeId = req.auth.employee ? req.auth.employee.id : (req.body || {}).employeeId;
   if (!employeeId || !str(text)) return res.status(400).json({ error: "Mitarbeiter und Text erforderlich." });
   const todo = { id: uid(), employeeId, text: str(text), due: isDate(due) ? due : null, done: false };
   data.todos.push(todo);
@@ -498,7 +500,7 @@ app.post("/api/todos", requireUser, (req, res) => {
 
 app.patch("/api/todos/:id/toggle", requireUser, (req, res) => {
   const todo = data.todos.find((t) => t.id === req.params.id);
-  if (!todo) return res.status(404).json({ error: "Nicht gefunden." });
+  if (!todo || (req.auth.employee && todo.employeeId !== req.auth.employee.id)) return res.status(404).json({ error: "Nicht gefunden." });
   todo.done = !todo.done;
   persist();
   res.json(todo);
@@ -530,14 +532,36 @@ function applyTaskFields(task, b) {
   }
 }
 
+function canSeeTask(t, employee) {
+  return !t.employeeId || t.employeeId === employee.id;
+}
+// Mitarbeiter dürfen Aufgaben nur sich selbst oder "allen" zuweisen
+function checkAssign(req, res) {
+  const b = req.body || {};
+  const emp = req.auth.employee;
+  if (emp && b.employeeId !== undefined && b.employeeId && b.employeeId !== emp.id) {
+    res.status(403).json({ error: "Nur Admins können Aufgaben anderen zuweisen." });
+    return false;
+  }
+  return true;
+}
+
 function notifyTask(task, auth) {
-  if (!task.employeeId || (auth.employee && auth.employee.id === task.employeeId)) return;
+  const author = auth.employee ? auth.employee.id : "admin:" + auth.admin.id;
+  if (!task.employeeId) {
+    // Aufgabe für alle: alle aktiven Mitarbeiter (außer Ersteller) benachrichtigen
+    pushTo((s) => s.ownerId !== author && !s.ownerId.startsWith("admin:") && ownerActive(s.ownerId),
+      { title: "📋 Neue Aufgabe für alle", body: task.title, tag: "task-" + task.id, url: "/?tab=aufgaben" }).catch(() => {});
+    return;
+  }
+  if (auth.employee && auth.employee.id === task.employeeId) return;
   notifyEmployee(task.employeeId, { title: "📋 Neue Aufgabe für dich", body: task.title + (task.due ? " · fällig " + task.due.split("-").reverse().join(".") : ""), tag: "task-" + task.id, url: "/?tab=aufgaben" });
 }
 
 app.post("/api/tasks", requireUser, (req, res) => {
   const b = req.body || {};
   if (!str(b.title)) return res.status(400).json({ error: "Titel erforderlich." });
+  if (!checkAssign(req, res)) return;
   const task = { id: uid(), title: "", description: "", employeeId: null, status: "offen", location: null, due: null, priority: "normal", createdAt: Date.now(), doneAt: null };
   applyTaskFields(task, b);
   data.tasks.push(task);
@@ -548,7 +572,8 @@ app.post("/api/tasks", requireUser, (req, res) => {
 
 app.patch("/api/tasks/:id", requireUser, (req, res) => {
   const task = data.tasks.find((t) => t.id === req.params.id);
-  if (!task) return res.status(404).json({ error: "Nicht gefunden." });
+  if (!task || (req.auth.employee && !canSeeTask(task, req.auth.employee))) return res.status(404).json({ error: "Nicht gefunden." });
+  if (!checkAssign(req, res)) return;
   const before = task.employeeId;
   applyTaskFields(task, req.body || {});
   if (!task.title) return res.status(400).json({ error: "Titel erforderlich." });
@@ -560,7 +585,7 @@ app.patch("/api/tasks/:id", requireUser, (req, res) => {
 // alte Route (Kompatibilität)
 app.patch("/api/tasks/:id/move", requireUser, (req, res) => {
   const task = data.tasks.find((t) => t.id === req.params.id);
-  if (!task) return res.status(404).json({ error: "Nicht gefunden." });
+  if (!task || (req.auth.employee && !canSeeTask(task, req.auth.employee))) return res.status(404).json({ error: "Nicht gefunden." });
   applyTaskFields(task, { status: (req.body || {}).status });
   persist();
   res.json(task);
