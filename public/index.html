@@ -1901,7 +1901,7 @@ function PhotoPickButtons({ onPick, disabled, compact }) {
 // =====================================================================
 // ERINNERUNGEN
 // =====================================================================
-const REPEAT_LABEL = { none: "einmalig", daily: "täglich", weekdays: "Mo–Fr", weekly: "wöchentlich" };
+const REPEAT_LABEL = { none: "einmalig", daily: "täglich (Mo–So)", weekly: "wöchentlich (gleicher Wochentag)", weekdays: "nur Mo–Fr" };
 let audioCtx = null;
 // Audio muss nach einer Berührung freigeschaltet werden (Browser-Regel)
 if (typeof window !== "undefined") {
