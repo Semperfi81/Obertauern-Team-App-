@@ -981,6 +981,7 @@ function BoardView({ S, me, isAdmin, act }) {
                           <span style={{ color: t.employeeId ? (t.employeeId === me ? COLORS.accent2 : COLORS.textDim) : COLORS.accent }}>{t.employeeId ? (t.employeeId === me ? "👤 Für mich" : `👤 ${empName(t.employeeId) || "?"}`) : "👥 Für alle"}</span>
                           {t.due && <span style={{ color: overdue ? COLORS.danger : COLORS.textDim }}>📅 {fmtDateShort(t.due)}</span>}
                           <LocTag loc={t.location} />
+                          {(t.photos || []).length > 0 && <span>📷 {t.photos.length}</span>}
                         </div>
                         <div className="flex items-center gap-1 flex-shrink-0">
                           {col.id !== "offen" && <button onClick={() => move(t, -1)} className="w-7 h-7 rounded-md" style={{ color: COLORS.textDim, border: `1px solid ${COLORS.panelBorder}` }} title="Zurück">‹</button>}
@@ -1001,7 +1002,22 @@ function BoardView({ S, me, isAdmin, act }) {
   );
 }
 
-function TaskModal({ S, act, isAdmin, me, task, onClose }) {
+function TaskModal({ S, act, isAdmin, me, task: initialTask, onClose }) {
+  // immer die aktuelle Version der Aufgabe verwenden (z. B. nach Foto-Upload)
+  const task = initialTask ? S.tasks.find((t) => t.id === initialTask.id) || initialTask : null;
+  const [pending, setPending] = useState([]);
+  const [uploading, setUploading] = useState(false);
+  const [viewer, setViewer] = useState(null);
+  async function addPhotos(urls) {
+    if (!task) { setPending([...pending, ...urls].slice(0, 20)); return; }
+    setUploading(true);
+    for (const u of urls) { try { await act("/tasks/" + task.id + "/photos", { method: "POST", body: { dataUrl: u } }); } catch (e) { break; } }
+    setUploading(false);
+  }
+  async function removePhoto(pid) {
+    if (!confirm("Foto entfernen?")) return;
+    await act("/tasks/" + task.id + "/photos/" + pid, { method: "DELETE" }).catch(() => {});
+  }
   const [f, setF] = useState({
     title: task ? task.title : "", description: task ? task.description || "" : "",
     employeeId: task ? task.employeeId || "" : (isAdmin ? "" : me || ""), location: task ? task.location || "" : "",
@@ -1012,7 +1028,15 @@ function TaskModal({ S, act, isAdmin, me, task, onClose }) {
   async function save() {
     if (!f.title.trim()) return;
     const body = { ...f, employeeId: f.employeeId || null, location: f.location || null, due: f.due || null };
-    try { await act(task ? "/tasks/" + task.id : "/tasks", { method: task ? "PATCH" : "POST", body }); onClose(); } catch (e) {}
+    try {
+      const saved = await act(task ? "/tasks/" + task.id : "/tasks", { method: task ? "PATCH" : "POST", body });
+      if (!task && pending.length && saved && saved.id) {
+        setUploading(true);
+        for (const u of pending) { try { await act("/tasks/" + saved.id + "/photos", { method: "POST", body: { dataUrl: u } }); } catch (e) { break; } }
+        setUploading(false);
+      }
+      onClose();
+    } catch (e) {}
   }
   async function del() {
     if (!confirm("Aufgabe löschen?")) return;
@@ -1045,12 +1069,35 @@ function TaskModal({ S, act, isAdmin, me, task, onClose }) {
           <Select value={f.status} onChange={set("status")}>{WORKFLOW_COLS.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}</Select>
         </Field>
       )}
+      <div className="mb-4">
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-xs" style={{ color: COLORS.textDim }}>📷 Fotos zur Dokumentation {uploading && "· wird hochgeladen…"}</span>
+          <PhotoPickButtons disabled={uploading} onPick={addPhotos} />
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {task && (task.photos || []).map((ph) => (
+            <div key={ph.id} className="relative">
+              <Photo id={ph.id} className="w-20 h-20" onClick={setViewer} />
+              <div className="text-[9px] mt-0.5 w-20 truncate" style={{ color: COLORS.textDim }}>{ph.byName} · {new Date(ph.at).toLocaleDateString("de-AT", { day: "2-digit", month: "2-digit" })}</div>
+              {(isAdmin || ph.by === me) && <button onClick={() => removePhoto(ph.id)} className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full text-[10px]" style={{ background: COLORS.danger, color: "#fff" }}>✕</button>}
+            </div>
+          ))}
+          {!task && pending.map((u, i) => (
+            <div key={i} className="relative">
+              <img src={u} alt="" className="w-20 h-20 object-cover rounded-lg" />
+              <button onClick={() => setPending(pending.filter((_, j) => j !== i))} className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full text-[10px]" style={{ background: COLORS.danger, color: "#fff" }}>✕</button>
+            </div>
+          ))}
+          {((task && !(task.photos || []).length) || (!task && !pending.length)) && <span className="text-xs" style={{ color: COLORS.textDim }}>Noch keine Fotos – z. B. Schaden, Vorher/Nachher, Lieferung.</span>}
+        </div>
+      </div>
       <div className="flex gap-2">
-        <Btn onClick={save} className="flex-1">Speichern</Btn>
+        <Btn onClick={save} disabled={uploading} className="flex-1">Speichern</Btn>
         {task && isAdmin && <Btn kind="ghost" onClick={del}>🗑</Btn>}
         <Btn kind="ghost" onClick={onClose}>Abbrechen</Btn>
       </div>
       {task && task.doneAt && <p className="text-[11px] mt-2" style={{ color: COLORS.textDim }}>Erledigt am {new Date(task.doneAt).toLocaleString("de-AT")}</p>}
+      {viewer && <PhotoViewer url={viewer} onClose={() => setViewer(null)} />}
     </Modal>
   );
 }
@@ -1598,6 +1645,90 @@ function EmployeeModal({ emp, act, onClose }) {
 }
 
 // =====================================================================
+// FOTOS
+// =====================================================================
+// Bild im Browser verkleinern (max. 1600 px, JPEG) – spart Speicher & Datenvolumen
+function compressImage(file, maxSide = 1600, quality = 0.78) {
+  return new Promise((resolve, reject) => {
+    if (!file || !/^image\//.test(file.type)) return reject(new Error("Bitte ein Foto auswählen."));
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      const scale = Math.min(1, maxSide / Math.max(img.width, img.height));
+      const w = Math.round(img.width * scale), h = Math.round(img.height * scale);
+      const c = document.createElement("canvas"); c.width = w; c.height = h;
+      const ctx = c.getContext("2d"); ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, w, h); ctx.drawImage(img, 0, 0, w, h);
+      URL.revokeObjectURL(url);
+      resolve(c.toDataURL("image/jpeg", quality));
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("Foto konnte nicht gelesen werden.")); };
+    img.src = url;
+  });
+}
+
+// Geschützte Fotos mit Anmelde-Token laden und zwischenspeichern
+const photoCache = new Map();
+function usePhotoUrl(id) {
+  const [url, setUrl] = useState(() => photoCache.get(id) || null);
+  useEffect(() => {
+    if (!id || photoCache.has(id)) { setUrl(photoCache.get(id) || null); return; }
+    let alive = true;
+    fetch("/api/photos/" + id, { headers: { Authorization: "Bearer " + store.get(TOKEN_KEY) } })
+      .then((r) => (r.ok ? r.blob() : null))
+      .then((b) => { if (b) { const u = URL.createObjectURL(b); photoCache.set(id, u); if (alive) setUrl(u); } })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [id]);
+  return url;
+}
+
+function Photo({ id, src, className = "", onClick, onLoad }) {
+  const loaded = usePhotoUrl(src ? null : id);
+  const url = src || loaded;
+  return (
+    <button type="button" onClick={() => url && onClick && onClick(url)} className={`block overflow-hidden rounded-lg ${className}`} style={{ background: COLORS.bg, border: `1px solid ${COLORS.panelBorder}` }}>
+      {url ? <img src={url} alt="Foto" className="w-full h-full object-cover" onLoad={onLoad} /> : <div className="w-full h-full flex items-center justify-center text-xs" style={{ color: COLORS.textDim }}>📷 …</div>}
+    </button>
+  );
+}
+
+function PhotoViewer({ url, onClose }) {
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-2" style={{ background: "rgba(0,0,0,0.92)" }} onClick={onClose}>
+      <img src={url} alt="Foto" className="max-w-full max-h-full object-contain rounded-lg" />
+      <button onClick={onClose} className="absolute top-3 right-3 w-10 h-10 rounded-full text-lg" style={{ background: "rgba(255,255,255,0.15)", color: "#fff" }}>✕</button>
+      <a href={url} download="foto.jpg" onClick={(e) => e.stopPropagation()} className="absolute bottom-4 right-4 px-3 py-2 rounded-lg text-sm" style={{ background: "rgba(255,255,255,0.15)", color: "#fff" }}>⬇ Speichern</a>
+    </div>
+  );
+}
+
+// Zwei Wege: direkt Kamera öffnen oder aus der Galerie wählen
+function PhotoPickButtons({ onPick, disabled, compact }) {
+  const cam = useRef(null), gal = useRef(null);
+  const [busy, setBusy] = useState(false);
+  async function handle(files) {
+    if (!files || !files.length) return;
+    setBusy(true);
+    const out = [];
+    for (const f of Array.from(files).slice(0, 4)) {
+      try { out.push(await compressImage(f)); } catch (e) { alert(e.message); }
+    }
+    setBusy(false);
+    if (out.length) onPick(out);
+  }
+  const reset = (e) => { const f = e.target.files; handle(f).finally(() => { e.target.value = ""; }); };
+  return (
+    <span className="inline-flex gap-1.5">
+      <input ref={cam} type="file" accept="image/*" capture="environment" className="hidden" onChange={reset} />
+      <input ref={gal} type="file" accept="image/*" multiple className="hidden" onChange={reset} />
+      <Btn kind="ghost" disabled={disabled || busy} onClick={() => cam.current.click()} className={compact ? "px-2.5" : "text-xs"} title="Foto aufnehmen">📷{compact ? "" : " Kamera"}</Btn>
+      <Btn kind="ghost" disabled={disabled || busy} onClick={() => gal.current.click()} className={compact ? "px-2.5" : "text-xs"} title="Aus Galerie wählen">🖼{compact ? "" : " Galerie"}</Btn>
+      {busy && <span className="text-xs self-center" style={{ color: COLORS.textDim }}>…</span>}
+    </span>
+  );
+}
+
+// =====================================================================
 // GRUPPENCHAT
 // =====================================================================
 const CHAT_READ_KEY = "team-app-chat-read";
@@ -1609,8 +1740,11 @@ function chatUnread(S) {
 
 function ChatTab({ S, isAdmin, act, token }) {
   const [text, setText] = useState("");
+  const [pending, setPending] = useState([]); // Fotos, die noch gesendet werden
+  const [viewer, setViewer] = useState(null);
   const [sending, setSending] = useState(false);
   const listRef = useRef(null);
+  const toBottom = () => { const el = listRef.current; if (el) el.scrollTop = el.scrollHeight; };
   const msgs = S.messages || [];
   const lastId = msgs.length ? msgs[msgs.length - 1].id : "";
 
@@ -1623,9 +1757,9 @@ function ChatTab({ S, isAdmin, act, token }) {
 
   async function send() {
     const t = text.trim();
-    if (!t || sending) return;
+    if ((!t && !pending.length) || sending) return;
     setSending(true);
-    try { await act("/chat", { method: "POST", body: { text: t } }); setText(""); } catch (e) {}
+    try { await act("/chat", { method: "POST", body: { text: t, photos: pending } }); setText(""); setPending([]); } catch (e) {}
     setSending(false);
   }
   async function del(m) {
@@ -1658,7 +1792,12 @@ function ChatTab({ S, isAdmin, act, token }) {
               <div className={`flex ${mine ? "justify-end" : "justify-start"}`}>
                 <div className="max-w-[80%] px-3 py-1.5 rounded-2xl" style={{ background: mine ? COLORS.accent2 + "33" : COLORS.bg, border: `1px solid ${mine ? COLORS.accent2 + "66" : COLORS.panelBorder}`, borderBottomRightRadius: mine ? 6 : undefined, borderBottomLeftRadius: mine ? undefined : 6 }}>
                   {showName && <div className="text-[11px] font-medium mb-0.5" style={{ color: m.isAdmin ? COLORS.accent : COLORS.accent2 }}>{m.authorName}{m.isAdmin ? " · Admin" : ""}</div>}
-                  <div className="text-sm whitespace-pre-wrap break-words">{m.text}</div>
+                  {(m.photos || []).length > 0 && (
+                    <div className={`grid gap-1 my-1 ${m.photos.length > 1 ? "grid-cols-2" : "grid-cols-1"}`}>
+                      {m.photos.map((pid) => <Photo key={pid} id={pid} className={m.photos.length > 1 ? "w-32 h-32" : "w-56 h-56"} onClick={setViewer} onLoad={toBottom} />)}
+                    </div>
+                  )}
+                  {m.text && <div className="text-sm whitespace-pre-wrap break-words">{m.text}</div>}
                   <div className="text-[10px] text-right mt-0.5 flex items-center justify-end gap-2" style={{ color: COLORS.textDim }}>
                     {(mine || isAdmin) && <button onClick={() => del(m)} title="Löschen" className="opacity-60 hover:opacity-100">🗑</button>}
                     {fmtClock(m.at)}
@@ -1669,13 +1808,25 @@ function ChatTab({ S, isAdmin, act, token }) {
           );
         })}
       </div>
-      <div className="flex gap-2 p-2" style={{ borderTop: `1px solid ${COLORS.panelBorder}` }}>
+      {pending.length > 0 && (
+        <div className="flex gap-2 px-2 pt-2 overflow-x-auto" style={{ borderTop: `1px solid ${COLORS.panelBorder}` }}>
+          {pending.map((u, i) => (
+            <div key={i} className="relative flex-shrink-0">
+              <img src={u} alt="" className="w-16 h-16 object-cover rounded-lg" />
+              <button onClick={() => setPending(pending.filter((_, j) => j !== i))} className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full text-[10px]" style={{ background: COLORS.danger, color: "#fff" }}>✕</button>
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="flex gap-2 p-2 items-end" style={{ borderTop: pending.length ? "none" : `1px solid ${COLORS.panelBorder}` }}>
+        <PhotoPickButtons compact disabled={pending.length >= 4} onPick={(arr) => setPending([...pending, ...arr].slice(0, 4))} />
         <textarea value={text} onChange={(e) => setText(e.target.value)} rows={1} placeholder="Nachricht…"
           onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
           className="flex-1 px-3 py-2 rounded-lg resize-none" style={{ ...inputStyle, maxHeight: 120 }} />
-        <Btn onClick={send} disabled={!text.trim() || sending} className="px-4">➤</Btn>
+        <Btn onClick={send} disabled={(!text.trim() && !pending.length) || sending} className="px-4">{sending ? "…" : "➤"}</Btn>
       </div>
     </div>
+    {viewer && <PhotoViewer url={viewer} onClose={() => setViewer(null)} />}
     </>
   );
 }
