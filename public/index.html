@@ -866,12 +866,12 @@ function AufgabenTab(props) {
 function BoardView({ S, me, isAdmin, act }) {
   const [edit, setEdit] = useState(null);
   const [locFilter, setLocFilter] = useState("");
-  const [onlyMine, setOnlyMine] = useState(false);
+  const [who, setWho] = useState(""); // "" = alle sichtbaren, "all" = für alle, sonst Mitarbeiter-ID
   const [showDone, setShowDone] = useState(false);
   const today = todayISO();
   const empName = (id) => (S.employees.find((e) => e.id === id) || {}).name;
   const weekAgo = Date.now() - 7 * 864e5;
-  const tasks = S.tasks.filter((t) => (!locFilter || t.location === locFilter) && (!onlyMine || t.employeeId === me));
+  const tasks = S.tasks.filter((t) => (!locFilter || t.location === locFilter) && (!who || (who === "all" ? !t.employeeId : t.employeeId === who)));
   const prioRank = { hoch: 0, normal: 1, niedrig: 2 };
   const sortTasks = (a, b) => (prioRank[a.priority] ?? 1) - (prioRank[b.priority] ?? 1) || (a.due || "9999").localeCompare(b.due || "9999");
 
@@ -886,8 +886,17 @@ function BoardView({ S, me, isAdmin, act }) {
       <div className="flex gap-2 mb-4 flex-wrap items-center">
         <Btn onClick={() => setEdit({})}>+ Neue Aufgabe</Btn>
         <div className="w-44"><Select value={locFilter} onChange={setLocFilter} className="text-sm"><option value="">Alle Standorte</option>{S.locations.map((l) => <option key={l} value={l}>{l}</option>)}</Select></div>
-        {me && <Btn kind="ghost" onClick={() => setOnlyMine(!onlyMine)} className="text-xs">{onlyMine ? "Alle" : "Nur meine"}</Btn>}
+        {isAdmin ? (
+          <div className="w-44"><Select value={who} onChange={setWho} className="text-sm">
+            <option value="">Alle Aufgaben</option>
+            <option value="all">👥 Für alle</option>
+            {S.employees.filter((e) => e.active).map((e) => <option key={e.id} value={e.id}>👤 {e.name}</option>)}
+          </Select></div>
+        ) : (
+          <Segmented value={who} onChange={setWho} options={[{ id: "", label: "Alle" }, { id: me, label: "👤 Für mich" }, { id: "all", label: "👥 Für alle" }]} />
+        )}
       </div>
+      {!isAdmin && <p className="text-[11px] -mt-2 mb-3" style={{ color: COLORS.textDim }}>Du siehst Aufgaben, die dir zugeteilt sind, und Aufgaben für alle.</p>}
       <div className="grid sm:grid-cols-3 gap-3">
         {WORKFLOW_COLS.map((col) => {
           let colTasks = tasks.filter((t) => t.status === col.id).sort(sortTasks);
@@ -913,7 +922,7 @@ function BoardView({ S, me, isAdmin, act }) {
                       </button>
                       <div className="flex items-center justify-between mt-1.5 gap-2">
                         <div className="flex items-center gap-1.5 flex-wrap text-[11px]" style={{ color: COLORS.textDim }}>
-                          <span>{empName(t.employeeId) ? `👤 ${empName(t.employeeId)}` : "Offen für alle"}</span>
+                          <span style={{ color: t.employeeId ? (t.employeeId === me ? COLORS.accent2 : COLORS.textDim) : COLORS.accent }}>{t.employeeId ? (t.employeeId === me ? "👤 Für mich" : `👤 ${empName(t.employeeId) || "?"}`) : "👥 Für alle"}</span>
                           {t.due && <span style={{ color: overdue ? COLORS.danger : COLORS.textDim }}>📅 {fmtDateShort(t.due)}</span>}
                           <LocTag loc={t.location} />
                         </div>
@@ -939,7 +948,7 @@ function BoardView({ S, me, isAdmin, act }) {
 function TaskModal({ S, act, isAdmin, me, task, onClose }) {
   const [f, setF] = useState({
     title: task ? task.title : "", description: task ? task.description || "" : "",
-    employeeId: task ? task.employeeId || "" : "", location: task ? task.location || "" : "",
+    employeeId: task ? task.employeeId || "" : (isAdmin ? "" : me || ""), location: task ? task.location || "" : "",
     due: task ? task.due || "" : "", priority: task ? task.priority || "normal" : "normal",
     status: task ? task.status : "offen",
   });
@@ -963,8 +972,8 @@ function TaskModal({ S, act, isAdmin, me, task, onClose }) {
       <div className="grid grid-cols-2 gap-2">
         <Field label="Zuständig">
           <Select value={f.employeeId} onChange={set("employeeId")}>
-            <option value="">Offen für alle</option>
-            {S.employees.filter((e) => e.active).map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
+            <option value="">👥 Für alle (sieht jeder)</option>
+            {S.employees.filter((e) => e.active && (isAdmin || e.id === me)).map((e) => <option key={e.id} value={e.id}>👤 {e.name}{isAdmin ? " (nur sichtbar für sie/ihn)" : ""}</option>)}
           </Select>
         </Field>
         <Field label="Standort">
@@ -998,14 +1007,14 @@ function TodosView({ S, me, isAdmin, act }) {
   const active = S.employees.filter((e) => e.active);
   const list = [...S.todos].sort((a, b) => Number(a.done) - Number(b.done) || (a.due || "9999").localeCompare(b.due || "9999"));
   async function submit() {
-    if (!forEmployee || !text.trim()) return;
+    if ((isAdmin && !forEmployee) || !text.trim()) return;
     try { await act("/todos", { method: "POST", body: { employeeId: forEmployee, text, due } }); setText(""); setDue(""); } catch (e) {}
   }
   return (
     <div>
       <Panel className="mb-4">
         <div className="flex flex-col sm:flex-row gap-2">
-          <div className="sm:w-40"><Select value={forEmployee} onChange={setForEmployee}><option value="" disabled>Für wen?</option>{active.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}</Select></div>
+          {isAdmin && <div className="sm:w-40"><Select value={forEmployee} onChange={setForEmployee}><option value="" disabled>Für wen?</option>{active.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}</Select></div>}
           <TextInput value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submit()} placeholder="Neues To-Do…" className="flex-1" />
           <div className="sm:w-40"><TextInput type="date" value={due} onChange={(e) => setDue(e.target.value)} /></div>
           <Btn onClick={submit}>+ Hinzufügen</Btn>
