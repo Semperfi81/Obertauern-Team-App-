@@ -2,6 +2,8 @@ const express = require("express");
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
+let webpush = null;
+try { webpush = require("web-push"); } catch (e) { console.warn("web-push nicht installiert – keine Push-Benachrichtigungen."); }
 
 const app = express();
 app.use(express.json({ limit: "1mb" }));
@@ -24,7 +26,7 @@ let pgPool = null;
 function emptyData() {
   return {
     admins: [], employees: [], timeEntries: [], todos: [], tasks: [],
-    shifts: [], checklistTemplates: [], checklistRuns: [], sessions: [], messages: [],
+    shifts: [], checklistTemplates: [], checklistRuns: [], sessions: [], messages: [], pushSubs: [],
   };
 }
 
@@ -359,6 +361,7 @@ app.delete("/api/employees/:id", requireAdmin, (req, res) => {
   data.todos = data.todos.filter((t) => t.employeeId !== id);
   data.shifts = data.shifts.filter((s) => s.employeeId !== id);
   data.sessions = data.sessions.filter((x) => x.employeeId !== id);
+  data.pushSubs = data.pushSubs.filter((x) => x.ownerId !== id);
   data.tasks = data.tasks.map((t) => (t.employeeId === id ? { ...t, employeeId: null } : t));
   persist();
   res.json({ ok: true });
@@ -504,6 +507,11 @@ function applyTaskFields(task, b) {
   }
 }
 
+function notifyTask(task, auth) {
+  if (!task.employeeId || (auth.employee && auth.employee.id === task.employeeId)) return;
+  notifyEmployee(task.employeeId, { title: "📋 Neue Aufgabe für dich", body: task.title + (task.due ? " · fällig " + task.due.split("-").reverse().join(".") : ""), tag: "task-" + task.id, url: "/?tab=aufgaben" });
+}
+
 app.post("/api/tasks", requireUser, (req, res) => {
   const b = req.body || {};
   if (!str(b.title)) return res.status(400).json({ error: "Titel erforderlich." });
@@ -512,15 +520,18 @@ app.post("/api/tasks", requireUser, (req, res) => {
   data.tasks.push(task);
   persist();
   res.json(task);
+  notifyTask(task, req.auth);
 });
 
 app.patch("/api/tasks/:id", requireUser, (req, res) => {
   const task = data.tasks.find((t) => t.id === req.params.id);
   if (!task) return res.status(404).json({ error: "Nicht gefunden." });
+  const before = task.employeeId;
   applyTaskFields(task, req.body || {});
   if (!task.title) return res.status(400).json({ error: "Titel erforderlich." });
   persist();
   res.json(task);
+  if (task.employeeId !== before) notifyTask(task, req.auth);
 });
 
 // alte Route (Kompatibilität)
@@ -616,6 +627,10 @@ app.post("/api/shifts", requireAdmin, (req, res) => {
   data.shifts.push(s);
   persist();
   res.json(s);
+  if (s.date >= localDate()) {
+    const d = new Date(s.date + "T12:00:00Z").toLocaleDateString("de-AT", { weekday: "short", day: "2-digit", month: "2-digit", timeZone: "UTC" });
+    notifyEmployee(s.employeeId, { title: "📅 Neue Schicht", body: `${d} ${s.start}–${s.end}${s.location ? " · " + s.location : ""}`, tag: "shift-" + s.id, url: "/?tab=schichten" });
+  }
 });
 
 app.patch("/api/shifts/:id", requireAdmin, (req, res) => {
@@ -656,6 +671,70 @@ app.post("/api/shifts/copy-week", requireAdmin, (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// Push-Benachrichtigungen (Web Push). Schlüssel werden automatisch erzeugt
+// und in der Datenbank gespeichert – keine Einrichtung nötig.
+// ---------------------------------------------------------------------------
+function setupPush() {
+  if (!webpush) return;
+  if (!data.vapid || !data.vapid.publicKey) { data.vapid = webpush.generateVAPIDKeys(); persist(); }
+  webpush.setVapidDetails(process.env.VAPID_SUBJECT || "mailto:team@sport-gefaell.at", data.vapid.publicKey, data.vapid.privateKey);
+}
+function ownerOf(auth) {
+  return auth.employee ? auth.employee.id : "admin:" + auth.admin.id;
+}
+// Sendet an alle Abos, die filter(sub) erfüllen
+async function pushTo(filter, payload) {
+  if (!webpush || !data.vapid) return 0;
+  const subs = data.pushSubs.filter(filter);
+  const body = JSON.stringify(payload);
+  let sent = 0, removed = false;
+  await Promise.all(subs.map(async (s) => {
+    try { await webpush.sendNotification(s.subscription, body, { TTL: 60 * 60 * 24 }); sent++; }
+    catch (e) {
+      if (e && (e.statusCode === 404 || e.statusCode === 410)) { data.pushSubs = data.pushSubs.filter((x) => x !== s); removed = true; }
+      else console.warn("Push fehlgeschlagen:", e && (e.statusCode || e.message));
+    }
+  }));
+  if (removed) persist();
+  return sent;
+}
+// Nur aktive Mitarbeiter bzw. existierende Admins benachrichtigen
+function ownerActive(ownerId) {
+  if (ownerId.startsWith("admin:")) return data.admins.some((a) => "admin:" + a.id === ownerId);
+  const e = data.employees.find((x) => x.id === ownerId);
+  return !!e && e.active !== false;
+}
+function notifyEmployee(employeeId, payload) {
+  pushTo((s) => s.ownerId === employeeId && ownerActive(s.ownerId), payload).catch(() => {});
+}
+
+app.get("/api/push/key", (req, res) => {
+  res.json({ publicKey: data.vapid && webpush ? data.vapid.publicKey : null });
+});
+
+app.post("/api/push/subscribe", requireUser, (req, res) => {
+  const sub = (req.body || {}).subscription;
+  if (!sub || typeof sub.endpoint !== "string" || !sub.keys || !sub.keys.p256dh || !sub.keys.auth) return res.status(400).json({ error: "Ungültiges Abo." });
+  data.pushSubs = data.pushSubs.filter((x) => x.subscription.endpoint !== sub.endpoint);
+  data.pushSubs.push({ ownerId: ownerOf(req.auth), subscription: { endpoint: sub.endpoint, keys: { p256dh: sub.keys.p256dh, auth: sub.keys.auth } }, created: Date.now() });
+  persist();
+  res.json({ ok: true });
+});
+
+app.post("/api/push/unsubscribe", (req, res) => {
+  const endpoint = (req.body || {}).endpoint;
+  data.pushSubs = data.pushSubs.filter((x) => x.subscription.endpoint !== endpoint);
+  persist();
+  res.json({ ok: true });
+});
+
+app.post("/api/push/test", requireUser, async (req, res) => {
+  const me = ownerOf(req.auth);
+  const sent = await pushTo((s) => s.ownerId === me, { title: "Crew Sport Gefäll", body: "Benachrichtigungen funktionieren ✓", tag: "test", url: "/" });
+  res.json({ sent });
+});
+
+// ---------------------------------------------------------------------------
 // Gruppenchat
 // ---------------------------------------------------------------------------
 const MAX_MESSAGES = 2000;
@@ -674,6 +753,9 @@ app.post("/api/chat", requireUser, (req, res) => {
   if (data.messages.length > MAX_MESSAGES) data.messages = data.messages.slice(-MAX_MESSAGES);
   persist();
   res.json(msg);
+  pushTo((s) => s.ownerId !== msg.authorId && ownerActive(s.ownerId), {
+    title: "💬 " + msg.authorName, body: text.length > 140 ? text.slice(0, 137) + "…" : text, tag: "chat", url: "/?tab=chat",
+  }).catch(() => {});
 });
 
 // Löschen: eigene Nachricht oder als Admin jede
@@ -705,6 +787,7 @@ const PORT = process.env.PORT || 3000;
 loadData()
   .then((d) => {
     data = d;
+    setupPush();
     app.listen(PORT, () => console.log(`Team-App läuft auf Port ${PORT} (${pgPool ? "Postgres" : "Datei: " + DATA_FILE})`));
   })
   .catch((e) => {
