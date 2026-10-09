@@ -143,6 +143,33 @@ async function flush() {
 function uid() {
   return crypto.randomBytes(6).toString("hex");
 }
+// PINs werden zusätzlich verschlüsselt gespeichert, damit Admins sie bei
+// Bedarf einsehen können. Schlüssel: Umgebungsvariable PIN_KEY oder automatisch erzeugt.
+function pinKey() {
+  if (process.env.PIN_KEY) return crypto.createHash("sha256").update(process.env.PIN_KEY).digest();
+  if (!data.secrets) data.secrets = {};
+  if (!data.secrets.pinKey) { data.secrets.pinKey = crypto.randomBytes(32).toString("hex"); persist(); }
+  return Buffer.from(data.secrets.pinKey, "hex");
+}
+function encryptPin(pin) {
+  const iv = crypto.randomBytes(12);
+  const c = crypto.createCipheriv("aes-256-gcm", pinKey(), iv);
+  const enc = Buffer.concat([c.update(pin, "utf8"), c.final()]);
+  return [iv.toString("hex"), c.getAuthTag().toString("hex"), enc.toString("hex")].join(":");
+}
+function decryptPin(v) {
+  try {
+    const [iv, tag, enc] = v.split(":").map((x) => Buffer.from(x, "hex"));
+    const d = crypto.createDecipheriv("aes-256-gcm", pinKey(), iv);
+    d.setAuthTag(tag);
+    return Buffer.concat([d.update(enc), d.final()]).toString("utf8");
+  } catch (e) { return null; }
+}
+function setEmployeePin(emp, pin) {
+  emp.salt = uid(); emp.pinHash = hashPin(pin, emp.salt); emp.pinEnc = encryptPin(pin); emp.pinSetAt = Date.now();
+}
+const PIN_RE = /^[0-9A-Za-z]{4,12}$/;
+
 function hashPin(pin, salt) {
   return crypto.createHash("sha256").update(salt + ":" + pin).digest("hex");
 }
@@ -256,17 +283,34 @@ app.post("/api/login", (req, res) => {
   const { employeeId, pin } = req.body || {};
   const emp = data.employees.find((e) => e.id === employeeId && e.active !== false);
   if (!emp) return res.status(401).json({ error: "Name oder PIN falsch." });
-  if (!emp.pinHash) return res.status(401).json({ error: "Für dich ist noch keine PIN vergeben. Bitte frag einen Admin." });
+  if (!emp.pinHash) return res.status(409).json({ error: "Du hast noch keine PIN – bitte lege jetzt deine PIN fest.", needSetup: true });
   if (isLocked("emp:" + emp.id)) return res.status(429).json({ error: "Zu viele Fehlversuche. Bitte 5 Minuten warten." });
   if (hashPin(str(pin, 20), emp.salt) !== emp.pinHash) { noteFail("emp:" + emp.id); return res.status(401).json({ error: "Name oder PIN falsch." }); }
   failed.delete("emp:" + emp.id);
+  if (!emp.pinEnc) emp.pinEnc = encryptPin(str(pin, 20)); // ältere Konten: PIN nachträglich für Admin einsehbar machen
+  res.json(startSession(emp));
+});
+
+function startSession(emp) {
   const token = uid() + uid() + uid();
   data.sessions.push({ token, employeeId: emp.id, created: Date.now() });
   // pro Mitarbeiter max. 5 Geräte angemeldet
   const mine = data.sessions.filter((x) => x.employeeId === emp.id);
   if (mine.length > 5) { const drop = new Set(mine.slice(0, mine.length - 5).map((x) => x.token)); data.sessions = data.sessions.filter((x) => !drop.has(x.token)); }
   persist();
-  res.json({ token, role: "employee", name: emp.name });
+  return { token, role: "employee", name: emp.name };
+}
+
+// Erste Anmeldung: Mitarbeiter ohne PIN legt seine PIN selbst fest
+app.post("/api/setup-pin", (req, res) => {
+  const { employeeId, pin } = req.body || {};
+  const emp = data.employees.find((e) => e.id === employeeId && e.active !== false);
+  if (!emp) return res.status(404).json({ error: "Mitarbeiter nicht gefunden." });
+  if (emp.pinHash) return res.status(409).json({ error: "Für dich gibt es schon eine PIN. Bitte damit anmelden." });
+  const p = str(pin, 20);
+  if (!PIN_RE.test(p)) return res.status(400).json({ error: "PIN: 4–12 Ziffern oder Buchstaben." });
+  setEmployeePin(emp, p);
+  res.json(startSession(emp));
 });
 
 app.post("/api/logout", (req, res) => {
@@ -283,8 +327,8 @@ app.post("/api/me/pin", requireUser, (req, res) => {
   const { oldPin, newPin } = req.body || {};
   if (hashPin(str(oldPin, 20), emp.salt) !== emp.pinHash) return res.status(403).json({ error: "Alte PIN falsch." });
   const np = str(newPin, 20);
-  if (np.length < 4) return res.status(400).json({ error: "Neue PIN muss mind. 4 Zeichen haben." });
-  emp.salt = uid(); emp.pinHash = hashPin(np, emp.salt);
+  if (!PIN_RE.test(np)) return res.status(400).json({ error: "PIN: 4–12 Ziffern oder Buchstaben." });
+  setEmployeePin(emp, np);
   const token = getToken(req);
   data.sessions = data.sessions.filter((x) => x.employeeId !== emp.id || x.token === token); // andere Geräte abmelden
   persist();
@@ -348,10 +392,10 @@ app.post("/api/employees", (req, res) => {
   const name = str((req.body || {}).name, 50);
   const pin = str((req.body || {}).pin, 20);
   if (!name) return res.status(400).json({ error: "Name erforderlich." });
-  if (pin.length < 4) return res.status(400).json({ error: "PIN mit mind. 4 Zeichen erforderlich." });
+  if (pin && !PIN_RE.test(pin)) return res.status(400).json({ error: "PIN: 4–12 Ziffern oder Buchstaben (oder leer lassen – dann vergibt der Mitarbeiter sie selbst)." });
   if (data.employees.some((e) => e.name.toLowerCase() === name.toLowerCase())) return res.status(400).json({ error: "Diesen Namen gibt es schon." });
-  const salt = uid();
-  const emp = { id: uid(), name, active: true, weeklyHours: null, salt, pinHash: hashPin(pin, salt) };
+  const emp = { id: uid(), name, active: true, weeklyHours: null };
+  if (pin) setEmployeePin(emp, pin);
   data.employees.push(emp);
   persist();
   res.json(publicEmployee(emp));
@@ -367,15 +411,28 @@ app.patch("/api/employees/:id", requireAdmin, (req, res) => {
     const h = b.weeklyHours === null || b.weeklyHours === "" ? null : Number(b.weeklyHours);
     emp.weeklyHours = h === null || isNaN(h) ? null : Math.max(0, Math.min(80, h));
   }
-  if (b.pin !== undefined) {
+  if (b.resetPin) {
+    // PIN löschen: Mitarbeiter legt beim nächsten Öffnen eine neue fest
+    delete emp.pinHash; delete emp.salt; delete emp.pinEnc; delete emp.pinSetAt;
+    data.sessions = data.sessions.filter((x) => x.employeeId !== emp.id);
+  } else if (b.pin !== undefined && str(b.pin, 20) !== "") {
     const pin = str(b.pin, 20);
-    if (pin.length < 4) return res.status(400).json({ error: "PIN muss mind. 4 Zeichen haben." });
-    emp.salt = uid(); emp.pinHash = hashPin(pin, emp.salt);
+    if (!PIN_RE.test(pin)) return res.status(400).json({ error: "PIN: 4–12 Ziffern oder Buchstaben." });
+    setEmployeePin(emp, pin);
     data.sessions = data.sessions.filter((x) => x.employeeId !== emp.id); // alle Geräte abmelden
   }
   if (emp.active === false) data.sessions = data.sessions.filter((x) => x.employeeId !== emp.id);
   persist();
   res.json(publicEmployee(emp));
+});
+
+// Admin: PIN eines Mitarbeiters anzeigen (falls vergessen)
+app.get("/api/employees/:id/pin", requireAdmin, (req, res) => {
+  const emp = data.employees.find((e) => e.id === req.params.id);
+  if (!emp) return res.status(404).json({ error: "Nicht gefunden." });
+  if (!emp.pinHash) return res.json({ pin: null, reason: "none" });
+  const pin = emp.pinEnc ? decryptPin(emp.pinEnc) : null;
+  res.json({ pin, reason: pin ? null : "unknown" });
 });
 
 app.delete("/api/employees/:id", requireAdmin, (req, res) => {
