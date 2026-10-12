@@ -16,6 +16,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js" crossorigin></script>
 <script src="https://unpkg.com/@babel/standalone@7.24.7/babel.min.js" crossorigin></script>
 <script src="https://cdn.tailwindcss.com/3.4.1"></script>
+<script src="/i18n.js"></script>
 <style>
   html, body { margin:0; padding:0; background:#15171C; }
   * { box-sizing: border-box; }
@@ -90,14 +91,14 @@ function fmtDuration(ms) {
 const fmtHours = (ms) => (ms / 3600000).toFixed(2).replace(".", ",");
 const fmtClock = (ts) => hmOf(ts);
 function fmtDateShort(iso) {
-  return parseISO(iso).toLocaleDateString("de-AT", { weekday: "short", day: "2-digit", month: "2-digit" });
+  return parseISO(iso).toLocaleDateString(window.I18N.locale, { weekday: "short", day: "2-digit", month: "2-digit" });
 }
 function fmtDateLong(iso) {
-  return parseISO(iso).toLocaleDateString("de-AT", { weekday: "long", day: "numeric", month: "long" });
+  return parseISO(iso).toLocaleDateString(window.I18N.locale, { weekday: "long", day: "numeric", month: "long" });
 }
 function fmtMonth(ym) {
   const [y, m] = ym.split("-").map(Number);
-  return new Date(y, m - 1, 1).toLocaleDateString("de-AT", { month: "long", year: "numeric" });
+  return new Date(y, m - 1, 1).toLocaleDateString(window.I18N.locale, { month: "long", year: "numeric" });
 }
 
 // ---------- Berechnungen ----------
@@ -371,6 +372,7 @@ function App() {
             </div>
           </div>
           <div className="flex items-center gap-1.5 flex-shrink-0">
+            <LangPicker compact />
             {!isAdmin && (
               <button onClick={() => setAuthView("pin")} title="PIN ändern" className="px-2.5 py-1.5 rounded-full text-xs" style={{ border: `1px solid ${COLORS.panelBorder}`, color: COLORS.textDim }}>🔑</button>
             )}
@@ -434,6 +436,41 @@ function App() {
   );
 }
 
+// Sprachauswahl (Flaggen). compact = nur aktuelle Flagge mit Aufklapp-Menü
+function LangPicker({ compact }) {
+  const [open, setOpen] = useState(false);
+  const L = window.I18N;
+  const cur = L.langs.find((l) => l.code === L.lang);
+  if (!compact) return (
+    <div translate="no" className="flex flex-wrap justify-center gap-1.5 mb-5">
+      {L.langs.map((l) => (
+        <button key={l.code} onClick={() => l.code !== L.lang && L.set(l.code)} title={l.name}
+          className="px-2 py-1 rounded-full text-xs flex items-center gap-1"
+          style={{ border: `1px solid ${l.code === L.lang ? COLORS.accent : COLORS.panelBorder}`, color: l.code === L.lang ? COLORS.accent : COLORS.textDim, background: l.code === L.lang ? COLORS.accent + "18" : "transparent" }}>
+          <span className="text-base leading-none">{l.flag}</span><span>{l.name}</span>
+        </button>
+      ))}
+    </div>
+  );
+  return (
+    <div translate="no" className="relative">
+      <button onClick={() => setOpen(!open)} title={cur.name} className="px-2.5 py-1.5 rounded-full text-xs" style={{ border: `1px solid ${COLORS.panelBorder}`, color: COLORS.textDim }}>{cur.flag}</button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
+          <div className="absolute right-0 mt-1 z-50 rounded-xl py-1 min-w-[150px]" style={{ background: COLORS.panel, border: `1px solid ${COLORS.panelBorder}` }}>
+            {L.langs.map((l) => (
+              <button key={l.code} onClick={() => { setOpen(false); if (l.code !== L.lang) L.set(l.code); }} className="w-full text-left px-3 py-1.5 text-sm flex items-center gap-2" style={{ color: l.code === L.lang ? COLORS.accent : COLORS.text }}>
+                <span className="text-base">{l.flag}</span>{l.name}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function LoginScreen({ S, offline, onDone, openAdmin }) {
   const [empId, setEmpId] = useState(() => store.get(LAST_EMP_KEY) || "");
   const [pin, setPin] = useState("");
@@ -472,6 +509,7 @@ function LoginScreen({ S, offline, onDone, openAdmin }) {
           <h1 className="text-xl font-semibold">Crew Sport Gefäll</h1>
           <p className="text-sm" style={{ color: COLORS.textDim }}>Team-App · Anmeldung</p>
         </div>
+        <LangPicker />
         {offline && <p className="text-xs mb-3 text-center" style={{ color: COLORS.warn }}>Keine Verbindung zum Server.</p>}
         <Panel>
           {list.length === 0 ? (
@@ -1202,7 +1240,7 @@ function TaskModal({ S, act, isAdmin, me, task: initialTask, onClose }) {
           {task && (task.photos || []).map((ph) => (
             <div key={ph.id} className="relative">
               <Photo id={ph.id} className="w-20 h-20" onClick={setViewer} />
-              <div className="text-[9px] mt-0.5 w-20 truncate" style={{ color: COLORS.textDim }}>{ph.byName} · {new Date(ph.at).toLocaleDateString("de-AT", { day: "2-digit", month: "2-digit" })}</div>
+              <div className="text-[9px] mt-0.5 w-20 truncate" style={{ color: COLORS.textDim }}>{ph.byName} · {new Date(ph.at).toLocaleDateString(window.I18N.locale, { day: "2-digit", month: "2-digit" })}</div>
               {(isAdmin || ph.by === me) && <button onClick={() => removePhoto(ph.id)} className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full text-[10px]" style={{ background: COLORS.danger, color: "#fff" }}>✕</button>}
             </div>
           ))}
@@ -1228,7 +1266,7 @@ function TaskModal({ S, act, isAdmin, me, task: initialTask, onClose }) {
           </div>
         </div>
       )}
-      {task && task.doneAt && <p className="text-[11px] mt-2" style={{ color: COLORS.textDim }}>Erledigt am {new Date(task.doneAt).toLocaleString("de-AT")}</p>}
+      {task && task.doneAt && <p className="text-[11px] mt-2" style={{ color: COLORS.textDim }}>Erledigt am {new Date(task.doneAt).toLocaleString(window.I18N.locale)}</p>}
       {viewer && <PhotoViewer url={viewer} onClose={() => setViewer(null)} />}
       {remind && task && <ReminderModal S={S} isAdmin={isAdmin} act={act} onClose={() => setRemind(false)}
         init={{ text: task.title, taskId: task.id, date: task.due && task.due >= todayISO() ? task.due : undefined, time: task.due ? "08:00" : undefined, target: isAdmin ? task.employeeId || "all" : "self" }} />}
