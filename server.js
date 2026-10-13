@@ -63,6 +63,12 @@ function normalize(d) {
   if (!d.settings.lunch) d.settings.lunch = { ...DEFAULT_LUNCH };
   if (!d.settings.clockout) d.settings.clockout = { ...DEFAULT_CLOCKOUT };
   if (!d.settings.dienst) d.settings.dienst = { ...DEFAULT_DIENST };
+  // Einmalig: Stammfiliale Grünwaldkopf für Peter Moisl-Posch, Karin und Marco (Wunsch von Peter)
+  if (!d.settings.homeFixGW) {
+    const gw = d.settings.locations.find((l) => /grün/i.test(l));
+    if (gw) d.employees.forEach((e) => { if (/moisl|karin|marco/i.test(e.name) && !e.home) e.home = gw; });
+    d.settings.homeFixGW = true;
+  }
   // Einmalig: alte Sommer-Beispiellisten (E-Bike, Funpark, Footgolf) entfernen
   if (!d.settings.winter2026) {
     const old = ["E-Bike Verleih öffnen", "E-Bike Verleih schließen", "Funpark Kontrolle", "Footgolf Platzrunde"];
@@ -834,6 +840,25 @@ app.post("/api/shifts/cell", requireAdmin, (req, res) => {
   persist();
   res.json({ ok: true });
 });
+// Dienste eines Mitarbeiters auf einen anderen übertragen (z. B. falscher Name aus Excel)
+app.post("/api/shifts/reassign", requireAdmin, (req, res) => {
+  const { from, to } = req.body || {};
+  const a = data.employees.find((e) => e.id === from), b = data.employees.find((e) => e.id === to);
+  if (!a || !b || a === b) return res.status(400).json({ error: "Mitarbeiter fehlt." });
+  let moved = 0;
+  data.shifts.forEach((s) => {
+    if (s.employeeId !== from) return;
+    data.shifts = data.shifts.filter((x) => !(x.employeeId === to && x.date === s.date));
+    s.employeeId = to; moved++;
+  });
+  if (!b.home && a.home) b.home = a.home;
+  // Hat der alte Eintrag keine Zeiten, PIN usw., wird er entfernt (war nur ein Platzhalter aus Excel)
+  const unused = !a.pinHash && !data.timeEntries.some((t) => t.employeeId === from);
+  if (unused) data.employees = data.employees.filter((e) => e.id !== from);
+  persist();
+  res.json({ moved, removed: unused });
+});
+
 // Dienstplan aus Excel übernehmen
 app.post("/api/shifts/import", requireAdmin, (req, res) => {
   const rows = Array.isArray((req.body || {}).rows) ? req.body.rows.slice(0, 100) : [];
