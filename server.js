@@ -19,6 +19,7 @@ const DEFAULT_AREAS = ["Skiverleih", "Alpine Mini Market", "Allgemein"];
 const DEFAULT_LUNCH = { enabled: true, minutes: 60, minHours: 6 };
 // Automatische Erinnerung "Noch eingestempelt?" zu dieser Uhrzeit (Wiener Zeit)
 const DEFAULT_CLOCKOUT = { enabled: true, time: "20:00" };
+const DEFAULT_DIENST = { start: "08:30", end: "18:00" };
 const LOCS = () => data.settings.locations;
 const AREAS = () => data.settings.areas;
 
@@ -61,6 +62,7 @@ function normalize(d) {
   if (!Array.isArray(d.settings.areas) || !d.settings.areas.length) d.settings.areas = DEFAULT_AREAS.slice();
   if (!d.settings.lunch) d.settings.lunch = { ...DEFAULT_LUNCH };
   if (!d.settings.clockout) d.settings.clockout = { ...DEFAULT_CLOCKOUT };
+  if (!d.settings.dienst) d.settings.dienst = { ...DEFAULT_DIENST };
   // Einmalig: alte Sommer-Beispiellisten (E-Bike, Funpark, Footgolf) entfernen
   if (!d.settings.winter2026) {
     const old = ["E-Bike Verleih öffnen", "E-Bike Verleih schließen", "Funpark Kontrolle", "Footgolf Platzrunde"];
@@ -254,7 +256,7 @@ function publicAdmin(a) {
   return { id: a.id, name: a.name };
 }
 function publicEmployee(e) {
-  return { id: e.id, name: e.name, active: e.active !== false, weeklyHours: e.weeklyHours, hasPin: !!e.pinHash };
+  return { id: e.id, name: e.name, active: e.active !== false, weeklyHours: e.weeklyHours, hasPin: !!e.pinHash, home: e.home || null };
 }
 function runningEntry(employeeId) {
   return data.timeEntries.find((e) => e.employeeId === employeeId && e.end === null);
@@ -265,7 +267,7 @@ function runningEntry(employeeId) {
 // ---------------------------------------------------------------------------
 app.get("/api/state", (req, res) => {
   const { admin, employee } = getAuth(req);
-  const base = { locations: LOCS(), areas: AREAS(), lunch: data.settings.lunch, clockout: data.settings.clockout, today: localDate(), adminCount: data.admins.length };
+  const base = { locations: LOCS(), areas: AREAS(), lunch: data.settings.lunch, clockout: data.settings.clockout, dienst: data.settings.dienst, today: localDate(), adminCount: data.admins.length };
   if (!admin && !employee) {
     // Nicht angemeldet: nur Namen für die Login-Auswahl
     return res.json({
@@ -432,6 +434,7 @@ app.patch("/api/employees/:id", requireAdmin, (req, res) => {
   const b = req.body || {};
   if (b.name !== undefined && str(b.name, 50)) emp.name = str(b.name, 50);
   if (b.active !== undefined) emp.active = !!b.active;
+  if (b.home !== undefined) emp.home = LOCS().includes(b.home) ? b.home : null;
   if (b.weeklyHours !== undefined) {
     const h = b.weeklyHours === null || b.weeklyHours === "" ? null : Number(b.weeklyHours);
     emp.weeklyHours = h === null || isNaN(h) ? null : Math.max(0, Math.min(80, h));
@@ -808,6 +811,58 @@ app.delete("/api/shifts/:id", requireAdmin, (req, res) => {
   res.json({ ok: true });
 });
 
+// Dienstplan: einen Tag eines Mitarbeiters setzen (Standort oder frei).
+// Ersetzt alle Schichten dieses Mitarbeiters an diesem Tag.
+function setDienst(employeeId, date, location, start, end) {
+  const before = data.shifts.filter((s) => s.employeeId === employeeId && s.date === date);
+  const same = location && before.length === 1 && before[0].location === location;
+  if (same) return 0;
+  if (!location && !before.length) return 0;
+  data.shifts = data.shifts.filter((s) => !(s.employeeId === employeeId && s.date === date));
+  if (location) data.shifts.push({ id: uid(), employeeId, date, start, end, location, note: "" });
+  return 1;
+}
+app.post("/api/shifts/cell", requireAdmin, (req, res) => {
+  const b = req.body || {};
+  if (!data.employees.some((e) => e.id === b.employeeId)) return res.status(400).json({ error: "Mitarbeiter fehlt." });
+  if (!isDate(b.date)) return res.status(400).json({ error: "Datum ungültig." });
+  const loc = b.location ? (LOCS().includes(b.location) ? b.location : undefined) : null;
+  if (loc === undefined) return res.status(400).json({ error: "Standort unbekannt." });
+  const d = data.settings.dienst;
+  const existing = data.shifts.find((s) => s.employeeId === b.employeeId && s.date === b.date);
+  setDienst(b.employeeId, b.date, loc, existing && loc ? existing.start : d.start, existing && loc ? existing.end : d.end);
+  persist();
+  res.json({ ok: true });
+});
+// Dienstplan aus Excel übernehmen
+app.post("/api/shifts/import", requireAdmin, (req, res) => {
+  const rows = Array.isArray((req.body || {}).rows) ? req.body.rows.slice(0, 100) : [];
+  const d = data.settings.dienst;
+  let changed = 0, newEmps = 0;
+  const touched = new Set();
+  for (const r of rows) {
+    let emp = r.employeeId && data.employees.find((e) => e.id === r.employeeId);
+    if (!emp && r.create) {
+      const name = str(r.name, 50);
+      if (!name) continue;
+      emp = data.employees.find((e) => e.name.toLowerCase() === name.toLowerCase());
+      if (!emp) { emp = { id: uid(), name, active: true, weeklyHours: null }; data.employees.push(emp); newEmps++; }
+    }
+    if (!emp) continue;
+    if (r.home && LOCS().includes(r.home) && !emp.home) emp.home = r.home;
+    for (const c of (Array.isArray(r.cells) ? r.cells.slice(0, 62) : [])) {
+      if (!isDate(c.date)) continue;
+      const loc = c.location ? (LOCS().includes(c.location) ? c.location : undefined) : null;
+      if (loc === undefined) continue;
+      const n = setDienst(emp.id, c.date, loc, d.start, d.end);
+      if (n) { changed += n; touched.add(emp.id); }
+    }
+  }
+  persist();
+  res.json({ changed, newEmployees: newEmps });
+  touched.forEach((id) => notifyEmployee(id, { title: "📅 Dienstplan aktualisiert", body: "Schau dir deine neuen Dienste an.", tag: "dienstplan", url: "/?tab=schichten" }));
+});
+
 // Ganze Woche kopieren (Montag -> Montag)
 app.post("/api/shifts/copy-week", requireAdmin, (req, res) => {
   const { from, to } = req.body || {};
@@ -912,6 +967,11 @@ app.put("/api/settings", requireAdmin, (req, res) => {
     const a = cleanList(b.areas);
     if (!a.length) return res.status(400).json({ error: "Mindestens ein Bereich nötig." });
     data.settings.areas = a;
+  }
+  if (b.dienst !== undefined && b.dienst && typeof b.dienst === "object") {
+    const st = isTime(b.dienst.start) ? b.dienst.start : DEFAULT_DIENST.start, en = isTime(b.dienst.end) ? b.dienst.end : DEFAULT_DIENST.end;
+    if (en <= st) return res.status(400).json({ error: "Dienstende muss nach dem Beginn liegen." });
+    data.settings.dienst = { start: st, end: en };
   }
   if (b.clockout !== undefined && b.clockout && typeof b.clockout === "object") {
     data.settings.clockout = { enabled: !!b.clockout.enabled, time: isTime(b.clockout.time) ? b.clockout.time : "20:00" };
