@@ -1474,14 +1474,114 @@ const WORKFLOW_COLS = [
 const PRIO = { hoch: { label: "Hoch", color: "#D5694B" }, normal: { label: "Normal", color: "#8C919E" }, niedrig: { label: "Niedrig", color: "#4DA8A0" } };
 
 function AufgabenTab(props) {
-  const [view, setView] = useState(() => (new URLSearchParams(location.search).get("reminder") ? "reminders" : "board"));
+  const [view, setView] = useState(() => { const q = new URLSearchParams(location.search); return q.get("reminder") ? "reminders" : q.get("ideas") ? "ideas" : "board"; });
+  const newIdeas = props.isAdmin ? (props.S.ideas || []).filter((i) => i.status === "neu").length : 0;
   const upcoming = (props.S.reminders || []).filter((r) => r.active && isMyReminder(props.S, r)).length;
   return (
     <div>
-      <div className="mb-4 overflow-x-auto"><Segmented value={view} onChange={setView} options={[{ id: "board", label: "📋 Board" }, { id: "todos", label: "✅ To-Dos" }, { id: "reminders", label: `⏰ Erinnerungen${upcoming ? " (" + upcoming + ")" : ""}` }]} /></div>
+      <div className="mb-4 overflow-x-auto"><Segmented value={view} onChange={setView} options={[{ id: "board", label: "📋 Board" }, { id: "todos", label: "✅ To-Dos" }, { id: "reminders", label: `⏰ Erinnerungen${upcoming ? " (" + upcoming + ")" : ""}` }, { id: "ideas", label: `💡 Ideen${newIdeas ? " (" + newIdeas + ")" : ""}` }]} /></div>
       {view === "board" && <BoardView {...props} />}
       {view === "todos" && <TodosView {...props} />}
       {view === "reminders" && <RemindersView {...props} />}
+      {view === "ideas" && <IdeasView {...props} />}
+    </div>
+  );
+}
+
+// =====================================================================
+// IDEEN & NOTIZEN – Verbesserungsvorschläge für die App sammeln
+// =====================================================================
+const IDEA_STATUS = {
+  neu: { label: "neu", color: "#E8A33D" },
+  geplant: { label: "geplant", color: "#6FA8DC" },
+  erledigt: { label: "umgesetzt", color: "#4DA8A0" },
+  nein: { label: "nicht geplant", color: "#8C919E" },
+};
+const IDEA_AREAS = ["Zeit", "Dienstplan", "Aufgaben", "Listen", "Chat", "Auswertung", "Sonstiges"];
+function IdeasView({ S, me, isAdmin, act }) {
+  const [text, setText] = useState("");
+  const [area, setArea] = useState("");
+  const [pending, setPending] = useState([]);
+  const [sending, setSending] = useState(false);
+  const [filter, setFilter] = useState("offen");
+  const [viewer, setViewer] = useState(null);
+  const [replyFor, setReplyFor] = useState(null);
+  const [reply, setReply] = useState("");
+  const all = S.ideas || [];
+  const list = all.filter((i) => filter === "alle" || (filter === "offen" ? i.status === "neu" || i.status === "geplant" : i.status === "erledigt" || i.status === "nein"));
+  async function send() {
+    if (!text.trim() && !pending.length) return;
+    setSending(true);
+    try { await act("/ideas", { method: "POST", body: { text: text.trim(), area, photos: pending } }); setText(""); setPending([]); setArea(""); } catch (e) {}
+    setSending(false);
+  }
+  const setStatus = (i, status) => act("/ideas/" + i.id, { method: "PATCH", body: { status } }).catch(() => {});
+  async function del(i) { if (confirm("Notiz löschen?")) await act("/ideas/" + i.id, { method: "DELETE" }).catch(() => {}); }
+  async function saveReply(i) { await act("/ideas/" + i.id, { method: "PATCH", body: { reply } }).catch(() => {}); setReplyFor(null); setReply(""); }
+  function exportCSV() {
+    const out = [["Datum", "Von", "Bereich", "Status", "Idee / Notiz", "Antwort", "Fotos"]];
+    all.slice().sort((a, b) => a.at - b.at).forEach((i) => out.push([new Date(i.at).toLocaleString("de-AT"), i.authorName, i.area || "", IDEA_STATUS[i.status].label, i.text, i.reply || "", (i.photos || []).length]));
+    downloadCSV(`ideen_notizen_${todayISO()}.csv`, out);
+  }
+  return (
+    <div>
+      <Panel className="mb-4">
+        <h3 className="text-sm font-medium mb-1">💡 Neue Idee oder Notiz</h3>
+        <p className="text-xs mb-3" style={{ color: COLORS.textDim }}>{isAdmin ? "Was fehlt, was nervt, was ist gut? Alles sammeln – im Frühjahr wird ausgewertet." : "Hast du eine Idee, was in der App besser sein könnte, oder stört dich etwas? Schreib es hier – die Admins sehen es."}</p>
+        <textarea value={text} onChange={(e) => setText(e.target.value)} rows={3} placeholder="z. B. Im Dienstplan wäre eine Monatsansicht praktisch …" className="w-full px-3 py-2 rounded-lg mb-2" style={inputStyle} />
+        {pending.length > 0 && (
+          <div className="flex gap-2 mb-2">
+            {pending.map((u, i) => (
+              <div key={i} className="relative">
+                <img src={u} alt="" className="w-16 h-16 object-cover rounded-lg" />
+                <button onClick={() => setPending(pending.filter((_, j) => j !== i))} className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full text-[10px]" style={{ background: COLORS.danger, color: "#fff" }}>✕</button>
+              </div>
+            ))}
+          </div>
+        )}
+        <div className="flex gap-2 flex-wrap items-center">
+          <div className="w-40"><Select value={area} onChange={setArea}><option value="">Bereich (optional)</option>{IDEA_AREAS.map((a) => <option key={a} value={a}>{a}</option>)}</Select></div>
+          <PhotoPickButtons compact disabled={pending.length >= 4} onPick={(arr) => setPending([...pending, ...arr].slice(0, 4))} />
+          <Btn onClick={send} disabled={(!text.trim() && !pending.length) || sending} className="ml-auto">{sending ? "…" : "Speichern"}</Btn>
+        </div>
+      </Panel>
+
+      <div className="flex items-center justify-between gap-2 mb-3 flex-wrap">
+        <Segmented value={filter} onChange={setFilter} options={[{ id: "offen", label: "Offen" }, { id: "fertig", label: "Abgeschlossen" }, { id: "alle", label: "Alle" }]} />
+        {isAdmin && all.length > 0 && <Btn kind="ghost" onClick={exportCSV} className="text-xs">⬇ CSV</Btn>}
+      </div>
+      {list.length === 0 && <Empty>{isAdmin ? "Noch keine Ideen oder Notizen." : "Du hast noch nichts eingetragen."}</Empty>}
+      <div className="space-y-2">
+        {list.map((i) => {
+          const st = IDEA_STATUS[i.status] || IDEA_STATUS.neu;
+          const mine = i.authorId === S.myAuthorId;
+          return (
+            <Panel key={i.id} className="py-3">
+              <div className="flex items-center justify-between gap-2 mb-1">
+                <span className="text-xs" style={{ color: COLORS.textDim }}><b translate="no" style={{ color: COLORS.text }}>{i.authorName}</b>{" · "}{new Date(i.at).toLocaleDateString(window.I18N.locale, { day: "2-digit", month: "2-digit", year: "2-digit" })}{i.area ? <span>{" · "}{i.area}</span> : null}</span>
+                <span className="text-[11px] px-2 py-0.5 rounded-full" style={{ background: st.color + "22", color: st.color }}>{st.label}</span>
+              </div>
+              {i.text && <p className="text-sm whitespace-pre-wrap" translate="no">{i.text}</p>}
+              {(i.photos || []).length > 0 && <div className="flex gap-2 mt-2 flex-wrap">{i.photos.map((pid) => <Photo key={pid} id={pid} className="w-20 h-20" onClick={setViewer} />)}</div>}
+              {i.reply && <p className="text-xs mt-2 px-2.5 py-1.5 rounded-lg" style={{ background: COLORS.bg, color: COLORS.accent2 }}><span>↳ Antwort: </span><span translate="no">{i.reply}</span></p>}
+              {replyFor === i.id && (
+                <div className="flex gap-2 mt-2">
+                  <TextInput value={reply} onChange={(e) => setReply(e.target.value)} placeholder="Antwort an den Mitarbeiter…" />
+                  <Btn onClick={() => saveReply(i)}>OK</Btn>
+                </div>
+              )}
+              <div className="flex gap-1.5 mt-2 flex-wrap">
+                {isAdmin && Object.keys(IDEA_STATUS).filter((k) => k !== i.status).map((k) => (
+                  <button key={k} onClick={() => setStatus(i, k)} className="text-[11px] px-2 py-1 rounded-md" style={{ border: `1px solid ${IDEA_STATUS[k].color}66`, color: IDEA_STATUS[k].color }}>→ {IDEA_STATUS[k].label}</button>
+                ))}
+                {isAdmin && !mine && <button onClick={() => { setReplyFor(replyFor === i.id ? null : i.id); setReply(i.reply || ""); }} className="text-[11px] px-2 py-1 rounded-md" style={{ border: `1px solid ${COLORS.panelBorder}`, color: COLORS.textDim }}>↳ Antworten</button>}
+                {(isAdmin || mine) && <button onClick={() => del(i)} className="text-[11px] px-2 py-1 rounded-md ml-auto" style={{ color: COLORS.danger }}>🗑</button>}
+              </div>
+            </Panel>
+          );
+        })}
+      </div>
+      {viewer && <PhotoViewer url={viewer} onClose={() => setViewer(null)} />}
     </div>
   );
 }

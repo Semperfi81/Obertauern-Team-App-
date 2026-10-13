@@ -438,6 +438,31 @@ Object.assign(window.I18N_DICT, {
 "📊 Stunden": ["📊 Hours", "📊 Horas", "📊 Horas", "📊 Hodiny", "📊 Sati", "📊 Órák"]
 });
 
+// Ergänzungen (Ideen)
+Object.assign(window.I18N_DICT, {
+"💡 Ideen": ["💡 Ideas", "💡 Ideas", "💡 Ideias", "💡 Nápady", "💡 Ideje", "💡 Ötletek"],
+"💡 Neue Idee oder Notiz": ["💡 New idea or note", "💡 Nueva idea o nota", "💡 Nova ideia ou nota", "💡 Nový nápad alebo poznámka", "💡 Nova ideja ili bilješka", "💡 Új ötlet vagy jegyzet"],
+"Was fehlt, was nervt, was ist gut? Alles sammeln – im Frühjahr wird ausgewertet.": ["What's missing, what's annoying, what's good? Collect everything – it gets reviewed in spring.", "¿Qué falta, qué molesta, qué está bien? Recoge todo – se revisa en primavera.", "O que falta, o que incomoda, o que é bom? Junta tudo – é avaliado na primavera.", "Čo chýba, čo prekáža, čo je dobré? Zbieraj všetko – na jar sa vyhodnotí.", "Što nedostaje, što smeta, što je dobro? Skupljaj sve – na proljeće se pregledava.", "Mi hiányzik, mi zavaró, mi jó? Gyűjts mindent – tavasszal kiértékeljük."],
+"Hast du eine Idee, was in der App besser sein könnte, oder stört dich etwas? Schreib es hier – die Admins sehen es.": ["Do you have an idea how the app could be better, or does something bother you? Write it here – the admins will see it.", "¿Tienes una idea para mejorar la app o algo te molesta? Escríbelo aquí – los administradores lo verán.", "Tens uma ideia para melhorar a app ou algo te incomoda? Escreve aqui – os administradores vão ver.", "Máš nápad, čo by v aplikácii mohlo byť lepšie, alebo ťa niečo trápi? Napíš to sem – admini to uvidia.", "Imaš ideju kako bi aplikacija mogla biti bolja ili ti nešto smeta? Napiši ovdje – admini će vidjeti.", "Van ötleted, mi lehetne jobb az appban, vagy zavar valami? Írd ide – az adminok látják."],
+"z. B. Im Dienstplan wäre eine Monatsansicht praktisch …": ["e.g. a monthly view in the roster would be handy …", "p. ej. una vista mensual en el cuadrante sería útil …", "p. ex. uma vista mensal na escala seria útil …", "napr. mesačný pohľad v rozpise by bol praktický …", "npr. mjesečni prikaz u rasporedu bio bi koristan …", "pl. havi nézet jól jönne a beosztásban …"],
+"Bereich (optional)": ["Area (optional)", "Área (opcional)", "Área (opcional)", "Oblasť (nepovinné)", "Područje (neobavezno)", "Terület (opcionális)"],
+"Sonstiges": ["Other", "Otros", "Outros", "Iné", "Ostalo", "Egyéb"],
+"Offen": ["Open", "Pendiente", "Pendente", "Otvorené", "Otvoreno", "Nyitott"],
+"Abgeschlossen": ["Closed", "Cerradas", "Concluídas", "Uzavreté", "Zatvoreno", "Lezárt"],
+"⬇ CSV": ["⬇ CSV", "⬇ CSV", "⬇ CSV", "⬇ CSV", "⬇ CSV", "⬇ CSV"],
+"Noch keine Ideen oder Notizen.": ["No ideas or notes yet.", "Aún no hay ideas ni notas.", "Ainda sem ideias ou notas.", "Zatiaľ žiadne nápady ani poznámky.", "Još nema ideja ni bilješki.", "Még nincs ötlet vagy jegyzet."],
+"Du hast noch nichts eingetragen.": ["You haven't added anything yet.", "Aún no has añadido nada.", "Ainda não adicionaste nada.", "Zatiaľ si nič nezadal.", "Još nisi ništa unio.", "Még nem írtál be semmit."],
+"neu": ["new", "nueva", "nova", "nové", "novo", "új"],
+"geplant": ["planned", "prevista", "planeada", "plánované", "planirano", "tervezett"],
+"umgesetzt": ["done", "hecha", "feita", "zrealizované", "provedeno", "megvalósítva"],
+"nicht geplant": ["not planned", "no prevista", "não planeada", "neplánované", "nije planirano", "nem tervezett"],
+"↳ Antwort:": ["↳ Reply:", "↳ Respuesta:", "↳ Resposta:", "↳ Odpoveď:", "↳ Odgovor:", "↳ Válasz:"],
+"↳ Antworten": ["↳ Reply", "↳ Responder", "↳ Responder", "↳ Odpovedať", "↳ Odgovori", "↳ Válasz"],
+"Antwort an den Mitarbeiter…": ["Reply to the staff member…", "Respuesta al empleado…", "Resposta ao colaborador…", "Odpoveď zamestnancovi…", "Odgovor zaposleniku…", "Válasz a munkatársnak…"],
+"Notiz löschen?": ["Delete note?", "¿Eliminar nota?", "Eliminar nota?", "Vymazať poznámku?", "Obrisati bilješku?", "Jegyzet törlése?"]
+});
+window.I18N_PATTERNS.push(["💡 Ideen ({x})", ["💡 Ideas ({x})", "💡 Ideas ({x})", "💡 Ideias ({x})", "💡 Nápady ({x})", "💡 Ideje ({x})", "💡 Ötletek ({x})"]]);
+
 // ---- Übersetzungs-Engine: übersetzt die deutsche Oberfläche im Browser ----
 (function () {
   var KEY = "team-app-lang";
