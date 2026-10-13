@@ -126,7 +126,14 @@ function rangeStats(S, personId, dates) {
   return r;
 }
 const onBreak = (e) => !!e && e.end === null && (e.breaks || []).some((b) => b.end === null);
-const shiftMs = (s) => { let d = minutesOf(s.end) - minutesOf(s.start); if (d < 0) d += 1440; return d * 60000; };
+// Geplante Stunden einer Schicht – automatische Mittagspause wird wie bei der Zeiterfassung abgezogen
+let LUNCH_CFG = null;
+const shiftMs = (s) => {
+  let d = minutesOf(s.end) - minutesOf(s.start); if (d < 0) d += 1440;
+  const L = LUNCH_CFG;
+  if (L && L.enabled && d >= (Number(L.minHours) || 0) * 60) d = Math.max(0, d - (Number(L.minutes) || 0));
+  return d * 60000;
+};
 
 // ---------- CSV (Excel-freundlich: Semikolon, BOM für Umlaute) ----------
 function downloadCSV(filename, rows) {
@@ -249,7 +256,7 @@ function WeekNav({ monday, setMonday }) {
 // ---------- Tabs ----------
 const TABS = [
   { id: "zeit", label: "Zeit", icon: "🕒" },
-  { id: "schichten", label: "Schichten", icon: "📅" },
+  { id: "schichten", label: "Dienstplan", icon: "📅" },
   { id: "aufgaben", label: "Aufgaben", icon: "📋" },
   { id: "checklisten", label: "Listen", icon: "☑️" },
   { id: "chat", label: "Chat", icon: "💬" },
@@ -269,6 +276,7 @@ function App() {
   const setToken = (t) => { setTokenState(t); store.set(TOKEN_KEY, t); };
   const [authView, setAuthView] = useState(null);
 
+  LUNCH_CFG = S.lunch || null;
   const role = S.role;
   const isAdmin = role === "admin";
   const me = S.me ? S.me.id : null;
@@ -821,7 +829,320 @@ function ClockCard({ emp, S, isMe, empAct, today }) {
 // =====================================================================
 // SCHICHTPLAN
 // =====================================================================
+// =====================================================================
+// DIENSTPLAN (Raster wie die Excel-Vorlage) + Excel-Import
+// =====================================================================
+const WD_SHORT = ["MO", "DI", "MI", "DO", "FR", "SA", "SO"];
+// Excel-Farben: 1. Standort gelb, 2. Standort grün, frei rot
+const DIENST_COLORS = [{ bg: "#F2D23C", fg: "#1A1A1A" }, { bg: "#6B8E4E", fg: "#fff" }, { bg: "#6FA8DC", fg: "#10202E" }, { bg: "#B48EDB", fg: "#1A1A1A" }, { bg: "#E8A33D", fg: "#1A1A1A" }];
+const FREI_COLOR = { bg: "#D9473F", fg: "#fff" };
+function dienstColor(S, loc) { const i = (S.locations || []).indexOf(loc); return DIENST_COLORS[i < 0 ? 0 : i % DIENST_COLORS.length]; }
+function shortLoc(l) { return !l ? "" : l.length > 7 ? l.slice(0, 4) : l; }
+const fmtDM = (iso) => iso.slice(8, 10) + "." + iso.slice(5, 7) + ".";
+
+// Excel-Wert (Text "Haupt", "Grün", "Frei" …) einem Standort zuordnen. null = frei, undefined = unbekannt
+function matchLocText(S, v) {
+  const t = String(v == null ? "" : v).trim().toLowerCase();
+  if (!t || /^(frei|f|-|–|x|off|0|urlaub|krank)$/.test(t)) return null;
+  const L = S.locations || [];
+  return L.find((x) => x.toLowerCase() === t) || L.find((x) => x.toLowerCase().startsWith(t.slice(0, 4))) || L.find((x) => t.includes(x.toLowerCase().slice(0, 4)));
+}
+function homeOf(S, e, days) {
+  if (e.home && (S.locations || []).includes(e.home)) return e.home;
+  const cnt = {};
+  S.shifts.filter((s) => s.employeeId === e.id && days.includes(s.date) && s.location).forEach((s) => { cnt[s.location] = (cnt[s.location] || 0) + 1; });
+  const best = Object.keys(cnt).sort((a, b) => cnt[b] - cnt[a])[0];
+  return best || (S.locations || [])[0] || "";
+}
+
+function DienstplanGrid({ S, me, isAdmin, act, days, activeEmployees }) {
+  const [busy, setBusy] = useState("");
+  const L = S.locations || [];
+  const dienst = S.dienst || { start: "08:30", end: "18:00" };
+  const today = todayISO();
+  const emps = S.employees.filter((e) => e.active || S.shifts.some((s) => s.employeeId === e.id && days.includes(s.date)));
+  const cellOf = (empId, d) => {
+    const sh = S.shifts.filter((s) => s.employeeId === empId && s.date === d).sort((a, b) => a.start.localeCompare(b.start));
+    const abs = (S.absences || []).find((a) => a.employeeId === empId && absCovers(a, d) && a.status !== "abgelehnt");
+    return { sh, abs };
+  };
+  async function tap(empId, d) {
+    if (!isAdmin || busy) return;
+    const { sh } = cellOf(empId, d);
+    const cur = sh.length ? sh[0].location : null;
+    const order = [...L, null];
+    const next = order[(order.indexOf(cur) + 1) % order.length];
+    setBusy(empId + d);
+    try { await act("/shifts/cell", { method: "POST", body: { employeeId: empId, date: d, location: next } }); } catch (e) {}
+    setBusy("");
+  }
+  const groups = L.map((loc) => ({ loc, list: emps.filter((e) => homeOf(S, e, days) === loc) })).filter((g) => g.list.length); // Reihenfolge wie angelegt (= wie in Excel)
+  const lunch = S.lunch && S.lunch.enabled ? S.lunch.minutes : 0;
+
+  return (
+    <div>
+      <p className="text-xs mb-3" style={{ color: COLORS.textDim }}>
+        <span>🕗 Dienstzeit</span> <b style={{ color: COLORS.text }}>{dienst.start}–{dienst.end}</b>{lunch ? <span>{` · ${lunch} Min Mittagspause`}</span> : null}
+        {isAdmin && <span>{" · "}</span>}{isAdmin && <span>Tippe auf ein Feld zum Ändern.</span>}
+      </p>
+      {groups.length === 0 && <Empty>Noch keine Mitarbeiter angelegt.</Empty>}
+      {groups.map((g) => {
+        const gc = dienstColor(S, g.loc);
+        return (
+          <Panel key={g.loc} className="p-0 mb-4 overflow-x-auto scrollbar-thin">
+            <table className="w-full text-xs border-collapse" style={{ minWidth: 560 }}>
+              <thead>
+                <tr style={{ background: "#FFE699", color: "#1A1A1A" }}>
+                  <th className="text-left px-3 py-1.5 font-semibold sticky left-0" style={{ background: "#FFE699", minWidth: 130 }}>Mitarbeiter</th>
+                  {days.map((d, i) => (
+                    <th key={d} className="px-1 py-1.5 font-semibold text-center" style={d === today ? { boxShadow: `inset 0 -3px 0 ${COLORS.accent}` } : {}}>
+                      <div translate="no">{parseISO(d).toLocaleDateString(window.I18N.locale, { weekday: "short" }).replace(".", "").toUpperCase()}</div>
+                      <div className="font-normal text-[10px] tabular-nums">{fmtDM(d)}</div>
+                    </th>
+                  ))}
+                </tr>
+                <tr style={{ background: gc.bg + "55" }}>
+                  <td className="px-3 py-1.5 font-semibold sticky left-0" style={{ background: COLORS.panel, color: gc.bg === "#F2D23C" ? COLORS.warn : gc.bg }}>📍 {g.loc}</td>
+                  {days.map((d) => {
+                    const n = S.shifts.filter((s) => s.date === d && s.location === g.loc).map((s) => s.employeeId).filter((v, i, a) => a.indexOf(v) === i).length;
+                    return <td key={d} className="text-center font-semibold tabular-nums py-1.5" style={{ color: COLORS.text }} title="im Dienst">{n}</td>;
+                  })}
+                </tr>
+              </thead>
+              <tbody>
+                {g.list.map((e) => (
+                  <tr key={e.id} style={{ borderTop: `1px solid ${COLORS.panelBorder}` }}>
+                    <td className="px-3 py-1 font-medium sticky left-0 whitespace-nowrap" translate="no" style={{ background: COLORS.panel, color: e.id === me ? COLORS.accent2 : COLORS.text }}>{e.name}</td>
+                    {days.map((d) => {
+                      const { sh, abs } = cellOf(e.id, d);
+                      const loc = sh.length ? sh[0].location : null;
+                      let c, label, sub = "";
+                      if (abs && !sh.length) { c = { bg: ABS[abs.type].color, fg: "#fff" }; label = ABS[abs.type].icon + " " + ABS[abs.type].label; }
+                      else if (sh.length) {
+                        c = loc ? dienstColor(S, loc) : { bg: COLORS.accent2, fg: "#0E1411" }; label = loc ? shortLoc(loc) : "Dienst";
+                        if (sh[0].start !== dienst.start || sh[0].end !== dienst.end || sh.length > 1) sub = sh.map((s) => s.start.replace(/^0/, "") + "–" + s.end.replace(/^0/, "")).join(", ");
+                      } else { c = FREI_COLOR; label = "Frei"; }
+                      return (
+                        <td key={d} className="p-0.5">
+                          <button onClick={() => tap(e.id, d)} disabled={!isAdmin}
+                            className="w-full rounded-md px-1 py-1.5 text-center font-semibold leading-tight"
+                            style={{ background: c.bg, color: c.fg, opacity: busy === e.id + d ? 0.5 : 1, cursor: isAdmin ? "pointer" : "default", outline: e.id === me ? `2px solid ${COLORS.accent2}` : "none", outlineOffset: -2 }}
+                            title={sh.map((s) => `${s.start}–${s.end} ${s.location || ""} ${s.note || ""}`).join("\n")}>
+                            <div className="truncate">{label}</div>
+                            {sub && <div className="text-[9px] font-normal tabular-nums opacity-90 truncate">{sub}</div>}
+                          </button>
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </Panel>
+        );
+      })}
+      <div className="flex flex-wrap gap-2 text-[11px]">
+        {L.map((l) => { const c = dienstColor(S, l); return <span key={l} className="px-2 py-0.5 rounded" style={{ background: c.bg, color: c.fg }}><span translate="no">{shortLoc(l)}</span> = {l}</span>; })}
+        <span className="px-2 py-0.5 rounded" style={{ background: FREI_COLOR.bg, color: FREI_COLOR.fg }}>Frei</span>
+      </div>
+    </div>
+  );
+}
+
+// ---------- Excel-Import ----------
+// Kleiner .xlsx-Leser direkt im Browser (xlsx = ZIP mit XML), ohne Zusatz-Bibliothek
+async function readXlsx(buf) {
+  const u8 = new Uint8Array(buf), dv = new DataView(buf);
+  let eocd = -1;
+  for (let i = u8.length - 22; i >= Math.max(0, u8.length - 66000); i--) if (dv.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
+  if (eocd < 0) throw new Error("Keine gültige .xlsx-Datei (bitte als .xlsx speichern).");
+  const files = {}; let p = dv.getUint32(eocd + 16, true);
+  for (let n = dv.getUint16(eocd + 10, true); n > 0; n--) {
+    const method = dv.getUint16(p + 10, true), csize = dv.getUint32(p + 20, true);
+    const nl = dv.getUint16(p + 28, true), xl = dv.getUint16(p + 30, true), cl = dv.getUint16(p + 32, true), off = dv.getUint32(p + 42, true);
+    const name = new TextDecoder().decode(u8.subarray(p + 46, p + 46 + nl));
+    files[name] = { method, csize, off }; p += 46 + nl + xl + cl;
+  }
+  async function get(name) {
+    const f = files[name]; if (!f) return null;
+    const start = f.off + 30 + dv.getUint16(f.off + 26, true) + dv.getUint16(f.off + 28, true);
+    const raw = u8.subarray(start, start + f.csize);
+    if (f.method === 0) return new TextDecoder().decode(raw);
+    if (typeof DecompressionStream === "undefined") throw new Error("Dieser Browser kann .xlsx nicht lesen – bitte die Tabelle kopieren und einfügen.");
+    const ds = new Blob([raw]).stream().pipeThrough(new DecompressionStream("deflate-raw"));
+    return await new Response(ds).text();
+  }
+  const xml = (t) => new DOMParser().parseFromString(t, "application/xml");
+  const ss = []; const sst = await get("xl/sharedStrings.xml");
+  if (sst) xml(sst).querySelectorAll("si").forEach((si) => ss.push([...si.getElementsByTagName("t")].map((t) => t.textContent).join("")));
+  let sheet = "xl/worksheets/sheet1.xml";
+  try {
+    const wb = xml(await get("xl/workbook.xml")), rels = xml(await get("xl/_rels/workbook.xml.rels"));
+    const first = wb.getElementsByTagName("sheet")[0];
+    const rid = first.getAttribute("r:id") || first.getAttributeNS("http://schemas.openxmlformats.org/officeDocument/2006/relationships", "id");
+    const rel = [...rels.getElementsByTagName("Relationship")].find((r) => r.getAttribute("Id") === rid);
+    if (rel) { const t = rel.getAttribute("Target"); sheet = t.startsWith("/") ? t.slice(1) : "xl/" + t; }
+  } catch (e) {}
+  const doc = xml(await get(sheet) || "");
+  const grid = [];
+  const colNum = (ref) => { let n = 0; for (const ch of ref.replace(/\d+/g, "")) n = n * 26 + ch.charCodeAt(0) - 64; return n - 1; };
+  [...doc.getElementsByTagName("c")].forEach((c) => {
+    const ref = c.getAttribute("r"); const r = parseInt(ref.replace(/[A-Z]+/g, ""), 10) - 1, col = colNum(ref);
+    const t = c.getAttribute("t"); const v = c.getElementsByTagName("v")[0];
+    let val = "";
+    if (t === "s") val = ss[+v.textContent] || "";
+    else if (t === "inlineStr") val = [...c.getElementsByTagName("t")].map((x) => x.textContent).join("");
+    else if (v) val = t === "str" || t === "b" ? v.textContent : (isNaN(+v.textContent) ? v.textContent : +v.textContent);
+    (grid[r] = grid[r] || [])[col] = val;
+  });
+  return Array.from(grid, (row) => Array.from(row || [], (x) => (x === undefined ? "" : x)));
+}
+function cellToISO(v) {
+  if (v instanceof Date && !isNaN(v)) return `${v.getFullYear()}-${String(v.getMonth() + 1).padStart(2, "0")}-${String(v.getDate()).padStart(2, "0")}`;
+  if (typeof v === "number" && v > 30000 && v < 80000) { const d = new Date(Math.round((v - 25569) * 864e5)); return d.toISOString().slice(0, 10); }
+  const t = String(v == null ? "" : v).trim();
+  let m = t.match(/^(\d{1,2})\.(\d{1,2})\.(\d{2,4})$/);
+  if (m) { const y = m[3].length === 2 ? "20" + m[3] : m[3]; return `${y}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`; }
+  m = t.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+  return null;
+}
+// Liest das Raster: Kopfzeile MO…SO, darunter Datumszeile, Blöcke je Filiale, Mitarbeiterzeilen
+function parseDienstplan(S, grid, fallbackMonday) {
+  const out = new Map(); const warnings = []; let dayCols = null, dates = {}, home = null;
+  const txt = (v) => String(v == null ? "" : v).trim();
+  // Passt das Datum nicht zum Wochentag (z. B. Tippfehler im Jahr), passendes Jahr daneben suchen
+  const fixWd = (iso, w) => {
+    if (!iso) return iso;
+    const wdOf = (x) => (parseISO(x).getDay() + 6) % 7;
+    if (wdOf(iso) === w) return iso;
+    for (const dy of [1, -1]) { const alt = String(+iso.slice(0, 4) + dy) + iso.slice(4); if (wdOf(alt) === w) { if (!warnings.some((x) => x.startsWith("📅"))) warnings.push(`📅 Datum ${iso.slice(8, 10)}.${iso.slice(5, 7)}.${iso.slice(0, 4)} passt nicht zum Wochentag – als ${alt.slice(0, 4)} übernommen`); return alt; } }
+    return iso;
+  };
+  for (let r = 0; r < grid.length; r++) {
+    const row = grid[r] || [];
+    const wd = row.map((v) => { const t = txt(v).toLowerCase(); return /^(mo|di|mi|do|fr|sa|so)(ntag|nstag|ttwoch|nnerstag|eitag|mstag|nntag)?\.?$/.test(t) ? ["mo", "di", "mi", "do", "fr", "sa", "so"].indexOf(t.slice(0, 2)) : -1; });
+    if (wd.filter((x) => x >= 0).length >= 5) {
+      dayCols = []; dates = {};
+      wd.forEach((w, c) => { if (w >= 0) dayCols.push({ c, w }); });
+      dayCols.forEach(({ c, w }) => { const iso = fixWd(cellToISO(row[c]), w); if (iso) dates[c] = iso; }); // Datum evtl. in derselben Zeile
+      continue;
+    }
+    if (!dayCols) continue;
+    const isoRow = dayCols.map(({ c }) => cellToISO(row[c]));
+    if (isoRow.filter(Boolean).length >= 3 && !txt(row[0])) { dayCols.forEach(({ c, w }, i) => { if (isoRow[i]) dates[c] = fixWd(isoRow[i], w); }); continue; }
+    const name = txt(row[0]);
+    if (!name) continue;
+    if (/^legende/i.test(name)) { dayCols = null; continue; }
+    const vals = dayCols.map(({ c }) => txt(row[c]));
+    if (vals.every((v) => v === "")) continue;
+    // Filial-Überschrift (z. B. „Hauptfiliale“ mit Anzahl)
+    if (vals.every((v) => v === "" || /^\d+$/.test(v) || v.startsWith("="))) { const l = matchLocText(S, name.replace(/filiale/i, "")) ; home = l || home; continue; }
+    const cells = [];
+    dayCols.forEach(({ c, w }, i) => {
+      const date = dates[c] || addDays(fallbackMonday, w);
+      const loc = matchLocText(S, vals[i]);
+      if (loc === undefined) { warnings.push(`${name}: „${vals[i]}“ unbekannt – als frei übernommen`); cells.push({ date, location: null }); }
+      else cells.push({ date, location: loc });
+    });
+    const key = name.toLowerCase();
+    if (out.has(key)) out.get(key).cells.push(...cells); else out.set(key, { name, home, cells });
+  }
+  return { rows: [...out.values()], warnings };
+}
+function findEmployee(S, name) {
+  const n = name.toLowerCase().replace(/\s+/g, " ").trim();
+  const E = S.employees;
+  const rev = n.split(" ").reverse().join(" ");
+  return E.find((e) => e.name.toLowerCase() === n) || E.find((e) => e.name.toLowerCase() === rev)
+    || (() => { const f = E.filter((e) => n.split(" ").includes(e.name.toLowerCase().split(" ")[0])); return f.length === 1 ? f[0] : null; })()
+    || (() => { const f = E.filter((e) => e.name.toLowerCase().split(" ").length === 1 && n.split(" ").includes(e.name.toLowerCase())); return f.length === 1 ? f[0] : null; })();
+}
+
+function DienstImportModal({ S, act, monday, onClose, onDone }) {
+  const [text, setText] = useState("");
+  const [parsed, setParsed] = useState(null);
+  const [map, setMap] = useState({});
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  function useGrid(grid) {
+    const p = parseDienstplan(S, grid, monday);
+    if (!p.rows.length) { setErr("Keine Dienstplan-Zeilen gefunden. Bitte die Tabelle inkl. Kopfzeile (MO … SO) kopieren."); setParsed(null); return; }
+    setErr(""); setParsed(p);
+    const m = {}; p.rows.forEach((r) => { const e = findEmployee(S, r.name); m[r.name] = e ? e.id : "__new"; }); setMap(m);
+  }
+  function fromText(t) { setText(t); if (t.trim()) useGrid(t.replace(/\r/g, "").split("\n").map((l) => l.split(l.includes("\t") ? "\t" : ";"))); else setParsed(null); }
+  async function fromFile(f) {
+    if (!f) return;
+    setErr(""); setBusy(true);
+    try {
+      if (/\.csv$/i.test(f.name)) fromText(await f.text());
+      else useGrid(await readXlsx(await f.arrayBuffer()));
+    } catch (e) { setErr(e.message || "Datei konnte nicht gelesen werden."); }
+    setBusy(false);
+  }
+  const allDates = parsed ? [...new Set(parsed.rows.flatMap((r) => r.cells.map((c) => c.date)))].sort() : [];
+  async function save() {
+    setBusy(true);
+    try {
+      const rows = parsed.rows.filter((r) => map[r.name] !== "__skip").map((r) => map[r.name] === "__new" ? { create: true, name: r.name, home: r.home, cells: r.cells } : { employeeId: map[r.name], home: r.home, cells: r.cells });
+      const res = await act("/shifts/import", { method: "POST", body: { rows } });
+      alert(`${res.changed} Dienste übernommen.` + (res.newEmployees ? `\n${res.newEmployees} Mitarbeiter neu angelegt.` : ""));
+      onDone(allDates[0] ? mondayOf(allDates[0]) : monday);
+    } catch (e) { setErr(e.message); }
+    setBusy(false);
+  }
+  return (
+    <Modal onClose={onClose} wide>
+      <h3 className="text-sm font-medium mb-1">📥 Dienstplan aus Excel übernehmen</h3>
+      <p className="text-xs mb-3" style={{ color: COLORS.textDim }}>Excel-Datei auswählen – oder in Excel die Tabelle markieren (ab „Mitarbeiter / MO … SO“), kopieren und hier einfügen. Erkannt werden die Standorte (z. B. Haupt, Grün) und „Frei“.</p>
+      <label className="block mb-3">
+        <span className="inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm cursor-pointer" style={{ border: `1px solid ${COLORS.panelBorder}`, color: COLORS.text }}>📄 Excel-Datei wählen</span>
+        <input type="file" accept=".xlsx,.csv" className="hidden" onChange={(e) => fromFile(e.target.files[0])} />
+      </label>
+      <textarea value={text} onChange={(e) => fromText(e.target.value)} placeholder="…oder hier aus Excel einfügen (Strg+V)" rows={4}
+        className="w-full px-3 py-2 rounded-lg text-xs font-mono mb-3" style={inputStyle} />
+      {busy && <p className="text-xs mb-2" style={{ color: COLORS.textDim }}>⏳ …</p>}
+      {err && <p className="text-xs mb-2" style={{ color: COLORS.danger }}>{err}</p>}
+      {parsed && (
+        <>
+          <p className="text-xs mb-2" style={{ color: COLORS.textDim }}>Vorschau <span className="tabular-nums">{allDates.length ? `${fmtDM(allDates[0])} – ${fmtDM(allDates[allDates.length - 1])}` : ""}</span> · bestehende Dienste an diesen Tagen werden ersetzt.</p>
+          <div className="overflow-x-auto scrollbar-thin mb-3 rounded-lg" style={{ border: `1px solid ${COLORS.panelBorder}` }}>
+            <table className="text-[11px] border-collapse w-full" style={{ minWidth: 520 }}>
+              <tbody>
+                {parsed.rows.map((r) => (
+                  <tr key={r.name} style={{ borderTop: `1px solid ${COLORS.panelBorder}` }}>
+                    <td className="px-2 py-1" style={{ minWidth: 150 }}>
+                      <div className="font-medium" translate="no">{r.name}</div>
+                      <select value={map[r.name]} onChange={(e) => setMap({ ...map, [r.name]: e.target.value })} className="w-full mt-0.5 px-1 py-0.5 rounded text-[11px]" style={inputStyle}>
+                        <option value="__new">➕ neu anlegen</option>
+                        <option value="__skip">✕ überspringen</option>
+                        {S.employees.map((e) => <option key={e.id} value={e.id}>= {e.name}</option>)}
+                      </select>
+                    </td>
+                    {r.cells.slice(0, 7).map((c, i) => { const col = c.location ? dienstColor(S, c.location) : FREI_COLOR; return (
+                      <td key={i} className="p-0.5 text-center"><div className="rounded px-1 py-1 font-semibold" style={{ background: col.bg, color: col.fg, opacity: map[r.name] === "__skip" ? 0.3 : 1 }}>{c.location ? shortLoc(c.location) : "Frei"}<div className="text-[9px] font-normal">{fmtDM(c.date)}</div></div></td>
+                    ); })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {parsed.warnings.length > 0 && <p className="text-[11px] mb-3" style={{ color: COLORS.warn }}>⚠ {parsed.warnings.slice(0, 5).join(" · ")}</p>}
+        </>
+      )}
+      <div className="flex gap-2">
+        <Btn onClick={save} disabled={!parsed || busy} className="flex-1">Übernehmen</Btn>
+        <Btn kind="ghost" onClick={onClose}>Abbrechen</Btn>
+      </div>
+    </Modal>
+  );
+}
+
 function SchichtTab({ S, me, isAdmin, act, activeEmployees }) {
+  const [view, setViewState] = useState(() => store.get("team-app-shiftview") || "plan");
+  const setView = (v) => { setViewState(v); store.set("team-app-shiftview", v); };
+  const [importOpen, setImportOpen] = useState(false);
   const [monday, setMonday] = useState(mondayOf(todayISO()));
   const [onlyMine, setOnlyMine] = useState(false);
   const [edit, setEdit] = useState(null); // {shift} oder {date}
@@ -844,15 +1165,20 @@ function SchichtTab({ S, me, isAdmin, act, activeEmployees }) {
     <div>
       <div className="flex items-center justify-between gap-2 mb-4 flex-wrap">
         <WeekNav monday={monday} setMonday={setMonday} />
-        <div className="flex gap-2">
-          {me && <Btn kind="ghost" onClick={() => setOnlyMine(!onlyMine)} className="text-xs">{onlyMine ? "Alle zeigen" : "Nur meine"}</Btn>}
+        <div className="flex gap-2 flex-wrap">
+          <Segmented value={view} onChange={setView} options={[{ id: "plan", label: "🗓 Dienstplan" }, { id: "liste", label: "📋 Details" }]} />
+          {me && view === "liste" && <Btn kind="ghost" onClick={() => setOnlyMine(!onlyMine)} className="text-xs">{onlyMine ? "Alle zeigen" : "Nur meine"}</Btn>}
+          {isAdmin && <Btn kind="ghost" onClick={() => setImportOpen(true)} className="text-xs">📥 Aus Excel</Btn>}
           {isAdmin && <Btn kind="ghost" onClick={copyWeek} className="text-xs">⧉ Woche kopieren</Btn>}
         </div>
       </div>
 
       <AbsencePanel S={S} me={me} isAdmin={isAdmin} act={act} setModal={setAbsModal} />
 
-      <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
+      {view === "plan" && <DienstplanGrid S={S} me={me} isAdmin={isAdmin} act={act} days={days} activeEmployees={activeEmployees} />}
+      {importOpen && <DienstImportModal S={S} act={act} monday={monday} onClose={() => setImportOpen(false)} onDone={(m) => { setImportOpen(false); setMonday(m); setView("plan"); }} />}
+
+      {view === "liste" && <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
         {days.map((d) => {
           const list = weekShifts.filter((s) => s.date === d).sort((a, b) => a.start.localeCompare(b.start));
           const absList = (S.absences || []).filter((a) => absCovers(a, d) && a.status !== "abgelehnt" && (!onlyMine || a.employeeId === me));
@@ -881,7 +1207,7 @@ function SchichtTab({ S, me, isAdmin, act, activeEmployees }) {
             </Panel>
           );
         })}
-      </div>
+      </div>}
 
       {totals.length > 0 && (
         <Panel className="mt-4">
@@ -1758,7 +2084,7 @@ function TeamView({ S, act, openAdmins, token }) {
         ))}
       </div>
       <Btn kind="ghost" onClick={openAdmins}>🔐 Admins verwalten</Btn>
-      {edit && <EmployeeModal emp={edit} act={act} onClose={() => setEdit(null)} />}
+      {edit && <EmployeeModal emp={edit} act={act} locations={S.locations || []} onClose={() => setEdit(null)} />}
     </div>
   );
 }
@@ -1768,10 +2094,11 @@ function SettingsView({ S, act }) {
   const [areas, setAreas] = useState((S.areas || []).join("\n"));
   const [lunch, setLunch] = useState(() => ({ enabled: true, minutes: 60, minHours: 6, ...(S.lunch || {}) }));
   const [clockout, setClockout] = useState(() => ({ enabled: true, time: "20:00", ...(S.clockout || {}) }));
+  const [dienst, setDienst] = useState(() => ({ start: "08:30", end: "18:00", ...(S.dienst || {}) }));
   const [msg, setMsg] = useState("");
   async function save() {
     setMsg("");
-    try { await act("/settings", { method: "PUT", body: { locations: locs, areas, lunch, clockout } }); setMsg("Gespeichert ✓"); } catch (e) {}
+    try { await act("/settings", { method: "PUT", body: { locations: locs, areas, lunch, clockout, dienst } }); setMsg("Gespeichert ✓"); } catch (e) {}
   }
   return (
     <div className="grid sm:grid-cols-2 gap-3">
@@ -1797,6 +2124,14 @@ function SettingsView({ S, act }) {
         </div>
       </Panel>
       <Panel className="sm:col-span-2">
+        <h3 className="text-sm font-medium mb-1">🗓 Dienstzeiten (Dienstplan)</h3>
+        <p className="text-xs mb-3" style={{ color: COLORS.textDim }}>Gilt für neue Dienste im Dienstplan und beim Excel-Import.</p>
+        <div className="grid grid-cols-2 gap-2 max-w-sm">
+          <Field label="Beginn"><TextInput type="time" value={dienst.start} onChange={(e) => setDienst({ ...dienst, start: e.target.value })} /></Field>
+          <Field label="Ende"><TextInput type="time" value={dienst.end} onChange={(e) => setDienst({ ...dienst, end: e.target.value })} /></Field>
+        </div>
+      </Panel>
+      <Panel className="sm:col-span-2">
         <h3 className="text-sm font-medium mb-1">🕒 Erinnerung „Noch eingestempelt?“</h3>
         <p className="text-xs mb-3" style={{ color: COLORS.textDim }}>Wer zu dieser Uhrzeit noch eingestempelt ist, bekommt automatisch eine Benachrichtigung mit Ton. Admins bekommen eine Liste aller, die noch eingestempelt sind.</p>
         <div className="flex items-center gap-3 flex-wrap">
@@ -1813,13 +2148,14 @@ function SettingsView({ S, act }) {
   );
 }
 
-function EmployeeModal({ emp, act, onClose }) {
+function EmployeeModal({ emp, act, locations, onClose }) {
   const [name, setName] = useState(emp.name);
   const [hours, setHours] = useState(emp.weeklyHours ?? "");
   const [pin, setPin] = useState("");
   const [active, setActive] = useState(emp.active);
+  const [home, setHome] = useState(emp.home || "");
   async function save() {
-    const body = { name, weeklyHours: hours === "" ? null : Number(hours), active };
+    const body = { name, weeklyHours: hours === "" ? null : Number(hours), active, home: home || null };
     if (pin) body.pin = pin;
     try { await act("/employees/" + emp.id, { method: "PATCH", body }); onClose(); } catch (e) {}
   }
@@ -1835,6 +2171,9 @@ function EmployeeModal({ emp, act, onClose }) {
     <Modal onClose={onClose}>
       <h3 className="text-sm font-medium mb-3">Mitarbeiter bearbeiten</h3>
       <Field label="Name"><TextInput value={name} onChange={(e) => setName(e.target.value)} /></Field>
+      <Field label="Stammfiliale (Gruppe im Dienstplan)">
+        <Select value={home} onChange={setHome}><option value="">automatisch</option>{locations.map((l) => <option key={l} value={l}>{l}</option>)}</Select>
+      </Field>
       <Field label="Soll-Stunden pro Woche (optional)"><TextInput type="number" min="0" value={hours} onChange={(e) => setHours(e.target.value)} /></Field>
       <Field label="PIN selbst festlegen (optional – sonst legt der Mitarbeiter sie selbst fest)">
         <TextInput type="text" inputMode="numeric" autoComplete="off" value={pin} onChange={(e) => setPin(e.target.value)} placeholder="leer lassen = unverändert" />

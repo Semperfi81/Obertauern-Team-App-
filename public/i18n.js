@@ -380,6 +380,45 @@ window.I18N_PATTERNS.push(
 ["· Soll {x}h", ["· target {x}h", "· objetivo {x}h", "· previsto {x}h", "· cieľ {x}h", "· cilj {x}h", "· cél {x}h"]]
 );
 
+// Ergänzungen (Dienstplan)
+Object.assign(window.I18N_DICT, {
+"Dienstplan": ["Roster", "Cuadrante", "Escala", "Rozpis", "Raspored", "Beosztás"],
+"🗓 Dienstplan": ["🗓 Roster", "🗓 Cuadrante", "🗓 Escala", "🗓 Rozpis", "🗓 Raspored", "🗓 Beosztás"],
+"📋 Details": ["📋 Details", "📋 Detalles", "📋 Detalhes", "📋 Detaily", "📋 Detalji", "📋 Részletek"],
+"📥 Aus Excel": ["📥 From Excel", "📥 Desde Excel", "📥 Do Excel", "📥 Z Excelu", "📥 Iz Excela", "📥 Excelből"],
+"🕗 Dienstzeit": ["🕗 Working hours", "🕗 Horario", "🕗 Horário", "🕗 Pracovný čas", "🕗 Radno vrijeme", "🕗 Munkaidő"],
+"Tippe auf ein Feld zum Ändern.": ["Tap a cell to change it.", "Toca una casilla para cambiarla.", "Toca numa célula para alterar.", "Ťukni na políčko a zmeň ho.", "Dodirni polje za promjenu.", "Koppints egy mezőre a módosításhoz."],
+"Frei": ["Off", "Libre", "Folga", "Voľno", "Slobodno", "Szabad"],
+"Dienst": ["Shift", "Turno", "Turno", "Služba", "Smjena", "Műszak"],
+"im Dienst": ["on duty", "de servicio", "de serviço", "v službe", "na dužnosti", "szolgálatban"],
+"📥 Dienstplan aus Excel übernehmen": ["📥 Import roster from Excel", "📥 Importar cuadrante de Excel", "📥 Importar escala do Excel", "📥 Prevziať rozpis z Excelu", "📥 Preuzmi raspored iz Excela", "📥 Beosztás átvétele Excelből"],
+"Excel-Datei auswählen – oder in Excel die Tabelle markieren (ab „Mitarbeiter / MO … SO“), kopieren und hier einfügen. Erkannt werden die Standorte (z. B. Haupt, Grün) und „Frei“.": ["Choose an Excel file – or select the table in Excel (from “Mitarbeiter / MO … SO”), copy it and paste it here. Locations (e.g. Haupt, Grün) and “Frei” are recognised.", "Elige un archivo de Excel – o selecciona la tabla en Excel (desde «Mitarbeiter / MO … SO»), cópiala y pégala aquí. Se reconocen las ubicaciones (p. ej. Haupt, Grün) y «Frei».", "Escolhe um ficheiro Excel – ou seleciona a tabela no Excel (a partir de «Mitarbeiter / MO … SO»), copia e cola aqui. São reconhecidos os locais (p. ex. Haupt, Grün) e «Frei».", "Vyber súbor Excel – alebo v Exceli označ tabuľku (od „Mitarbeiter / MO … SO“), skopíruj ju a vlož sem. Rozpoznajú sa miesta (napr. Haupt, Grün) a „Frei“.", "Odaberi Excel datoteku – ili u Excelu označi tablicu (od „Mitarbeiter / MO … SO“), kopiraj je i zalijepi ovdje. Prepoznaju se lokacije (npr. Haupt, Grün) i „Frei“.", "Válassz Excel-fájlt – vagy jelöld ki a táblázatot Excelben („Mitarbeiter / MO … SO“-tól), másold ki és illeszd be ide. A helyszíneket (pl. Haupt, Grün) és a „Frei“-t felismeri."],
+"📄 Excel-Datei wählen": ["📄 Choose Excel file", "📄 Elegir archivo Excel", "📄 Escolher ficheiro Excel", "📄 Vybrať súbor Excel", "📄 Odaberi Excel datoteku", "📄 Excel-fájl kiválasztása"],
+"…oder hier aus Excel einfügen (Strg+V)": ["…or paste from Excel here (Ctrl+V)", "…o pega aquí desde Excel (Ctrl+V)", "…ou cola aqui do Excel (Ctrl+V)", "…alebo sem vlož z Excelu (Ctrl+V)", "…ili ovdje zalijepi iz Excela (Ctrl+V)", "…vagy illeszd be ide Excelből (Ctrl+V)"],
+"Übernehmen": ["Import", "Importar", "Importar", "Prevziať", "Preuzmi", "Átvétel"],
+"➕ neu anlegen": ["➕ create new", "➕ crear nuevo", "➕ criar novo", "➕ vytvoriť nového", "➕ dodaj novog", "➕ új létrehozása"],
+"✕ überspringen": ["✕ skip", "✕ omitir", "✕ ignorar", "✕ preskočiť", "✕ preskoči", "✕ kihagyás"],
+"Vorschau": ["Preview", "Vista previa", "Pré-visualização", "Náhľad", "Pregled", "Előnézet"],
+"· bestehende Dienste an diesen Tagen werden ersetzt.": ["· existing shifts on these days will be replaced.", "· los turnos existentes de esos días se sustituirán.", "· os turnos existentes nestes dias serão substituídos.", "· existujúce služby v tieto dni sa nahradia.", "· postojeće smjene tih dana bit će zamijenjene.", "· az ezeken a napokon meglévő műszakok lecserélődnek."],
+"Keine Dienstplan-Zeilen gefunden. Bitte die Tabelle inkl. Kopfzeile (MO … SO) kopieren.": ["No roster rows found. Please copy the table including the header row (MO … SO).", "No se encontraron filas. Copia la tabla con la fila de cabecera (MO … SO).", "Nenhuma linha encontrada. Copia a tabela com o cabeçalho (MO … SO).", "Nenašli sa žiadne riadky. Skopíruj tabuľku aj s hlavičkou (MO … SO).", "Nisu pronađeni redovi. Kopiraj tablicu sa zaglavljem (MO … SO).", "Nem található sor. Másold a táblázatot a fejléccel együtt (MO … SO)."],
+"Keine gültige .xlsx-Datei (bitte als .xlsx speichern).": ["Not a valid .xlsx file (please save as .xlsx).", "No es un archivo .xlsx válido (guárdalo como .xlsx).", "Ficheiro .xlsx inválido (guarda como .xlsx).", "Neplatný súbor .xlsx (ulož ako .xlsx).", "Nije valjana .xlsx datoteka (spremi kao .xlsx).", "Érvénytelen .xlsx fájl (mentsd .xlsx-ként)."],
+"Dieser Browser kann .xlsx nicht lesen – bitte die Tabelle kopieren und einfügen.": ["This browser can't read .xlsx – please copy and paste the table.", "Este navegador no puede leer .xlsx – copia y pega la tabla.", "Este navegador não lê .xlsx – copia e cola a tabela.", "Tento prehliadač nevie čítať .xlsx – tabuľku skopíruj a vlož.", "Ovaj preglednik ne čita .xlsx – kopiraj i zalijepi tablicu.", "Ez a böngésző nem olvas .xlsx-et – másold és illeszd be a táblázatot."],
+"Datei konnte nicht gelesen werden.": ["File could not be read.", "No se pudo leer el archivo.", "Não foi possível ler o ficheiro.", "Súbor sa nepodarilo načítať.", "Datoteka se ne može učitati.", "A fájl nem olvasható."],
+"🗓 Dienstzeiten (Dienstplan)": ["🗓 Working hours (roster)", "🗓 Horario (cuadrante)", "🗓 Horário (escala)", "🗓 Pracovný čas (rozpis)", "🗓 Radno vrijeme (raspored)", "🗓 Munkaidő (beosztás)"],
+"Gilt für neue Dienste im Dienstplan und beim Excel-Import.": ["Used for new shifts in the roster and for Excel import.", "Se usa para turnos nuevos y la importación de Excel.", "Usado para novos turnos e importação do Excel.", "Platí pre nové služby v rozpise a import z Excelu.", "Vrijedi za nove smjene i uvoz iz Excela.", "Új műszakokra és az Excel-importra vonatkozik."],
+"Stammfiliale (Gruppe im Dienstplan)": ["Home branch (group in roster)", "Filial habitual (grupo en el cuadrante)", "Filial habitual (grupo na escala)", "Kmeňová pobočka (skupina v rozpise)", "Matična poslovnica (grupa u rasporedu)", "Törzsfiók (csoport a beosztásban)"],
+"automatisch": ["automatic", "automático", "automático", "automaticky", "automatski", "automatikus"],
+"Dienstende muss nach dem Beginn liegen.": ["End of shift must be after start.", "El fin debe ser posterior al inicio.", "O fim deve ser depois do início.", "Koniec musí byť po začiatku.", "Kraj mora biti nakon početka.", "A vége a kezdés után legyen."],
+"Standort unbekannt.": ["Unknown location.", "Ubicación desconocida.", "Local desconhecido.", "Neznáme miesto.", "Nepoznata lokacija.", "Ismeretlen helyszín."]
+});
+window.I18N_PATTERNS.push(
+["· {x} Min Mittagspause", ["· {x} min lunch break", "· {x} min pausa de comida", "· {x} min pausa de almoço", "· {x} min obed", "· {x} min pauza za ručak", "· {x} perc ebédszünet"]],
+["{x} Dienste übernommen.", ["{x} shifts imported.", "{x} turnos importados.", "{x} turnos importados.", "Prevzatých služieb: {x}.", "Preuzeto smjena: {x}.", "{x} műszak átvéve."]],
+["{x} Mitarbeiter neu angelegt.", ["{x} staff members created.", "{x} empleados creados.", "{x} colaboradores criados.", "Nových zamestnancov: {x}.", "Novih zaposlenika: {x}.", "{x} új munkatárs létrehozva."]],
+["{x}: „{y}“ unbekannt – als frei übernommen", ["{x}: “{y}” unknown – imported as off", "{x}: «{y}» desconocido – importado como libre", "{x}: «{y}» desconhecido – importado como folga", "{x}: „{y}“ neznáme – prevzaté ako voľno", "{x}: „{y}“ nepoznato – preuzeto kao slobodno", "{x}: „{y}“ ismeretlen – szabadként átvéve"]],
+["📅 Datum {x} passt nicht zum Wochentag – als {y} übernommen", ["📅 Date {x} doesn't match the weekday – imported as {y}", "📅 La fecha {x} no coincide con el día – importada como {y}", "📅 A data {x} não corresponde ao dia – importada como {y}", "📅 Dátum {x} nesedí s dňom – prevzaté ako {y}", "📅 Datum {x} ne odgovara danu – preuzeto kao {y}", "📅 A(z) {x} dátum nem illik a naphoz – {y}-ként átvéve"]]
+);
+
 // ---- Übersetzungs-Engine: übersetzt die deutsche Oberfläche im Browser ----
 (function () {
   var KEY = "team-app-lang";
