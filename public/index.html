@@ -1050,13 +1050,14 @@ function parseDienstplan(S, grid, fallbackMonday) {
   }
   return { rows: [...out.values()], warnings };
 }
+// Namen aus Excel den Mitarbeitern zuordnen – auch bei Kurzformen („Basti“ = „Bastian Seitlinger“) oder Doppelnamen
 function findEmployee(S, name) {
-  const n = name.toLowerCase().replace(/\s+/g, " ").trim();
-  const E = S.employees;
-  const rev = n.split(" ").reverse().join(" ");
-  return E.find((e) => e.name.toLowerCase() === n) || E.find((e) => e.name.toLowerCase() === rev)
-    || (() => { const f = E.filter((e) => n.split(" ").includes(e.name.toLowerCase().split(" ")[0])); return f.length === 1 ? f[0] : null; })()
-    || (() => { const f = E.filter((e) => e.name.toLowerCase().split(" ").length === 1 && n.split(" ").includes(e.name.toLowerCase())); return f.length === 1 ? f[0] : null; })();
+  const tok = (x) => x.toLowerCase().replace(/[^a-zäöüßáéíóúčšžćđ ]/g, " ").split(/\s+/).filter((t) => t.length >= 2);
+  const sim = (a, b) => { if (a === b) return 3; let i = 0; while (i < a.length && a[i] === b[i]) i++; return i >= 4 ? 2 : 0; };
+  const nt = tok(name);
+  const scored = S.employees.map((e) => { const et = tok(e.name); return { e, sc: nt.reduce((s, t) => s + Math.max(0, ...et.map((u) => sim(t, u))), 0) }; }).sort((a, b) => b.sc - a.sc);
+  if (!scored.length || scored[0].sc < 2 || (scored[1] && scored[1].sc === scored[0].sc)) return null;
+  return scored[0].e;
 }
 
 function DienstImportModal({ S, act, monday, onClose, onDone }) {
