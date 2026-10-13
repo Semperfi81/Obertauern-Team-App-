@@ -38,7 +38,7 @@ function emptyData() {
   return {
     admins: [], employees: [], timeEntries: [], todos: [], tasks: [],
     shifts: [], checklistTemplates: [], checklistRuns: [], sessions: [], messages: [], pushSubs: [],
-    reminders: [], absences: [],
+    reminders: [], absences: [], ideas: [],
     settings: { locations: DEFAULT_LOCATIONS.slice(), areas: DEFAULT_AREAS.slice(), lunch: { ...DEFAULT_LUNCH } },
   };
 }
@@ -302,6 +302,8 @@ app.get("/api/state", (req, res) => {
     checklistRuns: data.checklistRuns.filter((r) => r.date >= localDate(Date.now() - 14 * 864e5)),
     messages: data.messages.slice(-200),
     reminders: data.reminders.filter((r) => canSeeReminder(r, admin, employee)),
+    // Ideen & Notizen: Admins sehen alle, Mitarbeiter nur ihre eigenen
+    ideas: admin ? data.ideas : data.ideas.filter((i) => i.authorId === employee.id),
     absences: admin ? data.absences : data.absences
       .filter((a) => a.employeeId === employee.id || a.status === "genehmigt")
       // Bei Kollegen nur "abwesend" anzeigen – Grund (z. B. krank) bleibt privat
@@ -1329,6 +1331,56 @@ app.post("/api/chat", requireUser, async (req, res) => {
   pushTo((s) => s.ownerId !== msg.authorId && ownerActive(s.ownerId), {
     title: "💬 " + msg.authorName, body: (photos.length ? "📷 Foto" + (text ? " · " : "") : "") + (text.length > 140 ? text.slice(0, 137) + "…" : text), tag: "chat", url: "/?tab=chat",
   }).catch(() => {});
+});
+
+// ---------------------------------------------------------------------------
+// Ideen & Notizen für die App (Verbesserungsvorschläge)
+// ---------------------------------------------------------------------------
+const IDEA_STATUS = ["neu", "geplant", "erledigt", "nein"];
+app.post("/api/ideas", requireUser, async (req, res) => {
+  const b = req.body || {};
+  const text = str(b.text, 3000);
+  const images = Array.isArray(b.photos) ? b.photos.slice(0, 4) : [];
+  if (!text && !images.length) return res.status(400).json({ error: "Bitte einen Text eingeben." });
+  let photos = [];
+  try { for (const u of images) photos.push(await savePhoto(u)); }
+  catch (e) { await deletePhotos(photos); return res.status(400).json({ error: e.message }); }
+  const { admin, employee } = req.auth;
+  const idea = {
+    id: uid(), text, photos, at: Date.now(), status: "neu", reply: "",
+    area: str(b.area, 40),
+    authorId: employee ? employee.id : "admin:" + admin.id,
+    authorName: employee ? employee.name : admin.name,
+    isAdmin: !!admin,
+  };
+  data.ideas.unshift(idea);
+  if (data.ideas.length > 1000) data.ideas.length = 1000;
+  persist();
+  res.json(idea);
+  if (employee) pushTo((s) => s.ownerId.startsWith("admin:") && ownerActive(s.ownerId), {
+    title: "💡 Idee von " + idea.authorName, body: text.length > 140 ? text.slice(0, 137) + "…" : text || "📷 Foto", tag: "idea", url: "/?tab=aufgaben&ideas=1",
+  }).catch(() => {});
+});
+app.patch("/api/ideas/:id", requireUser, (req, res) => {
+  const idea = data.ideas.find((i) => i.id === req.params.id);
+  const { admin, employee } = req.auth;
+  if (!idea || (employee && idea.authorId !== employee.id)) return res.status(404).json({ error: "Nicht gefunden." });
+  const b = req.body || {};
+  if (b.text !== undefined && (admin ? idea.authorId === "admin:" + admin.id : true)) idea.text = str(b.text, 3000);
+  if (admin && b.status !== undefined && IDEA_STATUS.includes(b.status)) idea.status = b.status;
+  if (admin && b.reply !== undefined) idea.reply = str(b.reply, 1000);
+  persist();
+  res.json(idea);
+  if (admin && idea.authorId !== "admin:" + admin.id && (b.status !== undefined || b.reply)) notifyEmployee(idea.authorId, { title: "💡 Deine Idee", body: (b.reply ? str(b.reply, 140) : "Status: " + idea.status), tag: "idea-" + idea.id, url: "/?tab=aufgaben&ideas=1" });
+});
+app.delete("/api/ideas/:id", requireUser, (req, res) => {
+  const idea = data.ideas.find((i) => i.id === req.params.id);
+  const { admin, employee } = req.auth;
+  if (!idea || (employee && idea.authorId !== employee.id)) return res.status(404).json({ error: "Nicht gefunden." });
+  data.ideas = data.ideas.filter((i) => i !== idea);
+  deletePhotos(idea.photos || []).catch(() => {});
+  persist();
+  res.json({ ok: true });
 });
 
 // Löschen: eigene Nachricht oder als Admin jede
