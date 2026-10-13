@@ -432,6 +432,12 @@ window.I18N_PATTERNS.push(
 ["+ Mitarbeiter zu {x} hinzufügen…", ["+ Add staff member to {x}…", "+ Añadir empleado a {x}…", "+ Adicionar colaborador a {x}…", "+ Pridať zamestnanca do {x}…", "+ Dodaj zaposlenika u {x}…", "+ Munkatárs hozzáadása: {x}…"]]
 );
 
+Object.assign(window.I18N_DICT, {
+"Tag": ["Day", "Día", "Dia", "Deň", "Dan", "Nap"],
+"Woche": ["Week", "Semana", "Semana", "Týždeň", "Tjedan", "Hét"],
+"📊 Stunden": ["📊 Hours", "📊 Horas", "📊 Horas", "📊 Hodiny", "📊 Sati", "📊 Órák"]
+});
+
 // ---- Übersetzungs-Engine: übersetzt die deutsche Oberfläche im Browser ----
 (function () {
   var KEY = "team-app-lang";

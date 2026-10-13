@@ -1891,7 +1891,7 @@ function AdminTab(props) {
   const [view, setView] = useState("monat");
   return (
     <div>
-      <div className="mb-4 overflow-x-auto"><Segmented value={view} onChange={setView} options={[{ id: "monat", label: "📊 Monat" }, { id: "eintraege", label: "✎ Einträge" }, { id: "adminzeit", label: "🔒 Admin-Zeiten" }, { id: "team", label: "👥 Team" }, { id: "settings", label: "⚙️ Einstellungen" }]} /></div>
+      <div className="mb-4 overflow-x-auto"><Segmented value={view} onChange={setView} options={[{ id: "monat", label: "📊 Stunden" }, { id: "eintraege", label: "✎ Einträge" }, { id: "adminzeit", label: "🔒 Admin-Zeiten" }, { id: "team", label: "👥 Team" }, { id: "settings", label: "⚙️ Einstellungen" }]} /></div>
       {view === "monat" && <MonthView {...props} mode="staff" />}
       {view === "eintraege" && <EntriesView {...props} mode="staff" />}
       {view === "adminzeit" && (
@@ -1908,12 +1908,15 @@ function AdminTab(props) {
   );
 }
 
-function monthStats(S, emp, ym) {
-  const entries = S.timeEntries.filter((e) => e.employeeId === emp.id && e.date.startsWith(ym));
+function monthStats(S, emp, ym) { return periodStats(S, emp, monthDays(ym)); }
+// Auswertung für beliebigen Zeitraum (Tag, Woche, Monat)
+function periodStats(S, emp, dates) {
+  const inP = new Set(dates);
+  const entries = S.timeEntries.filter((e) => e.employeeId === emp.id && inP.has(e.date));
   const byDay = {};
   entries.forEach((e) => { (byDay[e.date] = byDay[e.date] || []).push(e); });
   let net = 0, brk = 0, lunch = 0;
-  const planned = S.shifts.filter((s) => s.employeeId === emp.id && s.date.startsWith(ym)).reduce((a, s) => a + shiftMs(s), 0);
+  const planned = S.shifts.filter((s) => s.employeeId === emp.id && inP.has(s.date)).reduce((a, s) => a + shiftMs(s), 0);
   const warnings = [];
   Object.keys(byDay).forEach((d) => {
     const x = dayStats(S, emp.id, d);
@@ -1922,7 +1925,8 @@ function monthStats(S, emp, ym) {
     if (x.net > 10 * 3600000) warnings.push(`${fmtDateShort(d)}: über 10 h`);
   });
   entries.filter((e) => e.end === null && e.date < todayISO()).forEach((e) => warnings.push(`${fmtDateShort(e.date)}: nicht ausgestempelt`));
-  const urlaub = absDaysInMonth(S, emp.id, ym, "urlaub"), krank = absDaysInMonth(S, emp.id, ym, "krank");
+  const absDays = (type) => dates.filter((d) => (S.absences || []).some((a) => a.employeeId === emp.id && a.type === type && a.status === "genehmigt" && absCovers(a, d))).length;
+  const urlaub = absDays("urlaub"), krank = absDays("krank");
   return { entries, days: Object.keys(byDay).length, net, brk, lunch, planned, warnings, urlaub, krank };
 }
 
@@ -1930,36 +1934,51 @@ const isAdminId = (id) => String(id).startsWith("admin:");
 
 function MonthView({ S, mode = "staff" }) {
   const [ym, setYm] = useState(todayISO().slice(0, 7));
+  const [kind, setKindState] = useState(() => store.get("team-app-period") || "monat");
+  const setKind = (k) => { setKindState(k); store.set("team-app-period", k); };
+  const [day, setDay] = useState(todayISO());
+  const [monday, setMonday] = useState(mondayOf(todayISO()));
+  const dates = kind === "tag" ? [day] : kind === "woche" ? weekDays(monday) : monthDays(ym);
+  const inP = new Set(dates);
+  const from = dates[0], to = dates[dates.length - 1];
+  const periodLabel = kind === "tag" ? fmtDateLong(day) : kind === "woche" ? `${fmtDateShort(from)} – ${fmtDateShort(to)}` : fmtMonth(ym);
+  const periodKey = kind === "tag" ? day : kind === "woche" ? `woche_${from}_bis_${to}` : ym;
+  const periodText = kind === "tag" ? parseISO(day).toLocaleDateString("de-AT") : kind === "woche" ? `${parseISO(from).toLocaleDateString("de-AT")} – ${parseISO(to).toLocaleDateString("de-AT")}` : ym;
   const admins = mode === "admins";
-  const hasEntries = (id) => S.timeEntries.some((t) => t.employeeId === id && t.date.startsWith(ym));
+  const hasEntries = (id) => S.timeEntries.some((t) => t.employeeId === id && inP.has(t.date));
   // Mitarbeiter-Auswertung ohne Admins – Admin-Zeiten werden getrennt ausgewertet
   const emps = admins ? adminPersons(S) : S.employees.filter((e) => e.active || hasEntries(e.id));
   const prefix = admins ? "admin-stunden" : "stunden";
-  const rows = emps.map((e) => ({ e, ...monthStats(S, e, ym) }));
+  const rows = emps.map((e) => ({ e, ...periodStats(S, e, dates) }));
   const total = rows.reduce((s, r) => s + r.net, 0);
 
   function exportSummary() {
-    const out = [[admins ? "Admin" : "Mitarbeiter", "Monat", "Arbeitstage", "Netto (Std)", "Pausen gestempelt (Std)", ...(admins ? [] : ["Mittagspause automatisch (Std)", "Urlaubstage", "Krankentage"]), "Geplant (Std)", "Differenz (Std)", "Hinweise"]];
-    rows.forEach((r) => out.push([r.e.name, ym, r.days, fmtHours(r.net), fmtHours(r.brk), ...(admins ? [] : [fmtHours(r.lunch), r.urlaub, r.krank]), fmtHours(r.planned), r.planned ? fmtHours(r.net - r.planned) : "", r.warnings.join(" | ")]));
-    downloadCSV(`${prefix}_${ym}_zusammenfassung.csv`, out);
+    const out = [[admins ? "Admin" : "Mitarbeiter", "Zeitraum", "Arbeitstage", "Netto (Std)", "Pausen gestempelt (Std)", ...(admins ? [] : ["Mittagspause automatisch (Std)", "Urlaubstage", "Krankentage"]), "Geplant (Std)", "Differenz (Std)", "Hinweise"]];
+    rows.forEach((r) => out.push([r.e.name, periodText, r.days, fmtHours(r.net), fmtHours(r.brk), ...(admins ? [] : [fmtHours(r.lunch), r.urlaub, r.krank]), fmtHours(r.planned), r.planned ? fmtHours(r.net - r.planned) : "", r.warnings.join(" | ")]));
+    downloadCSV(`${prefix}_${periodKey}_zusammenfassung.csv`, out);
   }
   function exportDetail() {
     const out = [[admins ? "Admin" : "Mitarbeiter", "Datum", "Wochentag", "Beginn", "Ende", "Pause gestempelt (Min)", ...(admins ? [] : ["Mittagspause automatisch (Min)"]), "Netto (Std)", "Standort", "Notiz", "Korrigiert von"]];
     const seen = new Set();
-    S.timeEntries.filter((e) => e.date.startsWith(ym) && isAdminId(e.employeeId) === admins).sort((a, b) => personName(S, a.employeeId).localeCompare(personName(S, b.employeeId)) || a.date.localeCompare(b.date) || a.start - b.start).forEach((e) => {
+    S.timeEntries.filter((e) => inP.has(e.date) && isAdminId(e.employeeId) === admins).sort((a, b) => personName(S, a.employeeId).localeCompare(personName(S, b.employeeId)) || a.date.localeCompare(b.date) || a.start - b.start).forEach((e) => {
       // Mittagspause einmal pro Tag (beim ersten Eintrag des Tages) abziehen
       const key = e.employeeId + "|" + e.date;
       let lunch = 0;
       if (!seen.has(key)) { seen.add(key); lunch = dayStats(S, e.employeeId, e.date).lunch; }
       out.push([personName(S, e.employeeId), parseISO(e.date).toLocaleDateString("de-AT"), fmtDateShort(e.date).split(",")[0], fmtClock(e.start), e.end ? fmtClock(e.end) : "läuft", Math.round(entryBreakMs(e) / 60000), ...(admins ? [] : [lunch ? Math.round(lunch / 60000) : ""]), fmtHours(Math.max(0, entryNetMs(e) - lunch)), e.location || "", e.note || "", e.editedBy || ""]);
     });
-    downloadCSV(`${prefix}_${ym}_details.csv`, out);
+    downloadCSV(`${prefix}_${periodKey}_details.csv`, out);
   }
 
   return (
     <div>
       <div className="flex items-center gap-2 mb-4 flex-wrap">
-        <div className="w-44"><TextInput type="month" value={ym} onChange={(e) => e.target.value && setYm(e.target.value)} /></div>
+        <Segmented value={kind} onChange={setKind} options={[{ id: "tag", label: "Tag" }, { id: "woche", label: "Woche" }, { id: "monat", label: "Monat" }]} />
+        {kind === "tag" && <div className="w-44"><TextInput type="date" value={day} onChange={(e) => e.target.value && setDay(e.target.value)} /></div>}
+        {kind === "woche" && <WeekNav monday={monday} setMonday={setMonday} />}
+        {kind === "monat" && <div className="w-44"><TextInput type="month" value={ym} onChange={(e) => e.target.value && setYm(e.target.value)} /></div>}
+      </div>
+      <div className="flex items-center gap-2 mb-4 flex-wrap">
         <Btn kind="ghost" onClick={exportSummary} className="text-xs">⬇ CSV Zusammenfassung</Btn>
         <Btn kind="ghost" onClick={exportDetail} className="text-xs">⬇ CSV Details</Btn>
       </div>
@@ -1967,7 +1986,7 @@ function MonthView({ S, mode = "staff" }) {
         <table className="w-full text-sm">
           <thead>
             <tr className="text-xs text-left" style={{ color: COLORS.textDim }}>
-              <th className="p-3 font-medium">{fmtMonth(ym)}</th>
+              <th className="p-3 font-medium">{periodLabel}</th>
               <th className="p-3 font-medium text-right">Tage</th>
               <th className="p-3 font-medium text-right">Netto</th>
               <th className="p-3 font-medium text-right hidden sm:table-cell">Pause</th>
