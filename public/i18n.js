@@ -419,6 +419,19 @@ window.I18N_PATTERNS.push(
 ["📅 Datum {x} passt nicht zum Wochentag – als {y} übernommen", ["📅 Date {x} doesn't match the weekday – imported as {y}", "📅 La fecha {x} no coincide con el día – importada como {y}", "📅 A data {x} não corresponde ao dia – importada como {y}", "📅 Dátum {x} nesedí s dňom – prevzaté ako {y}", "📅 Datum {x} ne odgovara danu – preuzeto kao {y}", "📅 A(z) {x} dátum nem illik a naphoz – {y}-ként átvéve"]]
 );
 
+// Ergänzungen (Dienstplan 2)
+Object.assign(window.I18N_DICT, {
+"Tippe auf ein Feld für Haupt / Grün / Frei, auf einen Namen zum Ändern.": ["Tap a cell for Haupt / Grün / Off, tap a name to change it.", "Toca una casilla para Haupt / Grün / Libre, o un nombre para cambiarlo.", "Toca numa célula para Haupt / Grün / Folga, ou num nome para alterar.", "Ťukni na políčko pre Haupt / Grün / Voľno, na meno pre zmenu.", "Dodirni polje za Haupt / Grün / Slobodno, ime za promjenu.", "Koppints egy mezőre (Haupt / Grün / Szabad), vagy egy névre a módosításhoz."],
+"Mitarbeiter im Dienstplan": ["Staff member in roster", "Empleado en el cuadrante", "Colaborador na escala", "Zamestnanec v rozpise", "Zaposlenik u rasporedu", "Munkatárs a beosztásban"],
+"Filiale": ["Branch", "Filial", "Filial", "Pobočka", "Poslovnica", "Fiók"],
+"Name ändern": ["Change name", "Cambiar nombre", "Alterar nome", "Zmeniť meno", "Promijeni ime", "Név módosítása"],
+"…oder ist das jemand aus der Liste? (Dienste werden übertragen)": ["…or is this someone from the list? (shifts are transferred)", "…¿o es alguien de la lista? (se transfieren los turnos)", "…ou é alguém da lista? (os turnos são transferidos)", "…alebo je to niekto zo zoznamu? (služby sa prenesú)", "…ili je to netko s popisa? (smjene se prenose)", "…vagy valaki a listáról? (a műszakok átkerülnek)"],
+"– nein –": ["– no –", "– no –", "– não –", "– nie –", "– ne –", "– nem –"]
+});
+window.I18N_PATTERNS.push(
+["+ Mitarbeiter zu {x} hinzufügen…", ["+ Add staff member to {x}…", "+ Añadir empleado a {x}…", "+ Adicionar colaborador a {x}…", "+ Pridať zamestnanca do {x}…", "+ Dodaj zaposlenika u {x}…", "+ Munkatárs hozzáadása: {x}…"]]
+);
+
 // ---- Übersetzungs-Engine: übersetzt die deutsche Oberfläche im Browser ----
 (function () {
   var KEY = "team-app-lang";

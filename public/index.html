@@ -855,6 +855,54 @@ function homeOf(S, e, days) {
   return best || (S.locations || [])[0] || "";
 }
 
+// Name im Dienstplan ändern: aus der Mitarbeiterliste wählen (wie beim Einsteigen) oder umbenennen, Filiale wechseln
+function DienstNameModal({ S, emp, act, groupLoc, onClose }) {
+  const [name, setName] = useState(emp.name);
+  const [other, setOther] = useState("");
+  const [err, setErr] = useState("");
+  const L = S.locations || [];
+  async function save() {
+    setErr("");
+    try {
+      if (other) {
+        // Dienste dieser Zeile auf den gewählten Mitarbeiter übertragen
+        await act("/shifts/reassign", { method: "POST", body: { from: emp.id, to: other } });
+      } else if (name.trim() && name.trim() !== emp.name) {
+        await act("/employees/" + emp.id, { method: "PATCH", body: { name: name.trim() } });
+      }
+      onClose();
+    } catch (e) { setErr(e.message); }
+  }
+  async function move(loc) { try { await act("/employees/" + emp.id, { method: "PATCH", body: { home: loc } }); onClose(); } catch (e) { setErr(e.message); } }
+  return (
+    <Modal onClose={onClose}>
+      <h3 className="text-sm font-medium mb-3">Mitarbeiter im Dienstplan</h3>
+      <Field label="Filiale">
+        <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${L.length}, minmax(0, 1fr))` }}>
+          {L.map((l) => { const c = dienstColor(S, l); const on = l === groupLoc; return (
+            <button key={l} onClick={() => move(l)} className="rounded-lg py-2 text-sm font-semibold" translate="no"
+              style={{ background: on ? c.bg : "transparent", color: on ? c.fg : c.bg, border: `2px solid ${c.bg}` }}>{l}</button>
+          ); })}
+        </div>
+      </Field>
+      <Field label="Name ändern">
+        <TextInput value={name} onChange={(e) => { setName(e.target.value); setOther(""); }} />
+      </Field>
+      <Field label="…oder ist das jemand aus der Liste? (Dienste werden übertragen)">
+        <Select value={other} onChange={setOther}>
+          <option value="">– nein –</option>
+          {S.employees.filter((x) => x.id !== emp.id).map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
+        </Select>
+      </Field>
+      {err && <p className="text-xs mb-2" style={{ color: COLORS.danger }}>{err}</p>}
+      <div className="flex gap-2">
+        <Btn onClick={save} className="flex-1">Speichern</Btn>
+        <Btn kind="ghost" onClick={onClose}>Abbrechen</Btn>
+      </div>
+    </Modal>
+  );
+}
+
 function DienstplanGrid({ S, me, isAdmin, act, days, activeEmployees }) {
   const [busy, setBusy] = useState("");
   const L = S.locations || [];
@@ -866,24 +914,26 @@ function DienstplanGrid({ S, me, isAdmin, act, days, activeEmployees }) {
     const abs = (S.absences || []).find((a) => a.employeeId === empId && absCovers(a, d) && a.status !== "abgelehnt");
     return { sh, abs };
   };
-  async function tap(empId, d) {
-    if (!isAdmin || busy) return;
-    const { sh } = cellOf(empId, d);
-    const cur = sh.length ? sh[0].location : null;
-    const order = [...L, null];
-    const next = order[(order.indexOf(cur) + 1) % order.length];
-    setBusy(empId + d);
-    try { await act("/shifts/cell", { method: "POST", body: { employeeId: empId, date: d, location: next } }); } catch (e) {}
+  const [pick, setPick] = useState(null); // {emp, date} – Farbauswahl für ein Feld
+  const [nameEdit, setNameEdit] = useState(null); // Mitarbeiter umbenennen / Filiale wechseln
+  function tap(emp, d) { if (isAdmin && !busy) setPick({ emp, date: d }); }
+  async function setCell(empId, d, loc) {
+    setPick(null); setBusy(empId + d);
+    try { await act("/shifts/cell", { method: "POST", body: { employeeId: empId, date: d, location: loc } }); } catch (e) {}
     setBusy("");
   }
-  const groups = L.map((loc) => ({ loc, list: emps.filter((e) => homeOf(S, e, days) === loc) })).filter((g) => g.list.length); // Reihenfolge wie angelegt (= wie in Excel)
+  async function setHome(empId, loc) {
+    try { await act("/employees/" + empId, { method: "PATCH", body: { home: loc } }); } catch (e) {}
+  }
+  // Reihenfolge wie angelegt (= wie in Excel). Admins sehen auch leere Filialen, um Mitarbeiter hinzuzufügen
+  const groups = L.map((loc) => ({ loc, list: emps.filter((e) => homeOf(S, e, days) === loc) })).filter((g) => g.list.length || isAdmin);
   const lunch = S.lunch && S.lunch.enabled ? S.lunch.minutes : 0;
 
   return (
     <div>
       <p className="text-xs mb-3" style={{ color: COLORS.textDim }}>
         <span>🕗 Dienstzeit</span> <b style={{ color: COLORS.text }}>{dienst.start}–{dienst.end}</b>{lunch ? <span>{` · ${lunch} Min Mittagspause`}</span> : null}
-        {isAdmin && <span>{" · "}</span>}{isAdmin && <span>Tippe auf ein Feld zum Ändern.</span>}
+        {isAdmin && <span>{" · "}</span>}{isAdmin && <span>Tippe auf ein Feld für Haupt / Grün / Frei, auf einen Namen zum Ändern.</span>}
       </p>
       {groups.length === 0 && <Empty>Noch keine Mitarbeiter angelegt.</Empty>}
       {groups.map((g) => {
@@ -912,7 +962,9 @@ function DienstplanGrid({ S, me, isAdmin, act, days, activeEmployees }) {
               <tbody>
                 {g.list.map((e) => (
                   <tr key={e.id} style={{ borderTop: `1px solid ${COLORS.panelBorder}` }}>
-                    <td className="px-3 py-1 font-medium sticky left-0 whitespace-nowrap" translate="no" style={{ background: COLORS.panel, color: e.id === me ? COLORS.accent2 : COLORS.text }}>{e.name}</td>
+                    <td className="px-3 py-1 font-medium sticky left-0 whitespace-nowrap" translate="no" style={{ background: COLORS.panel, color: e.id === me ? COLORS.accent2 : COLORS.text }}>
+                      {isAdmin ? <button onClick={() => setNameEdit(e)} className="text-left underline decoration-dotted underline-offset-2">{e.name}</button> : e.name}
+                    </td>
                     {days.map((d) => {
                       const { sh, abs } = cellOf(e.id, d);
                       const loc = sh.length ? sh[0].location : null;
@@ -924,7 +976,7 @@ function DienstplanGrid({ S, me, isAdmin, act, days, activeEmployees }) {
                       } else { c = FREI_COLOR; label = "Frei"; }
                       return (
                         <td key={d} className="p-0.5">
-                          <button onClick={() => tap(e.id, d)} disabled={!isAdmin}
+                          <button onClick={() => tap(e, d)} disabled={!isAdmin}
                             className="w-full rounded-md px-1 py-1.5 text-center font-semibold leading-tight"
                             style={{ background: c.bg, color: c.fg, opacity: busy === e.id + d ? 0.5 : 1, cursor: isAdmin ? "pointer" : "default", outline: e.id === me ? `2px solid ${COLORS.accent2}` : "none", outlineOffset: -2 }}
                             title={sh.map((s) => `${s.start}–${s.end} ${s.location || ""} ${s.note || ""}`).join("\n")}>
@@ -938,9 +990,36 @@ function DienstplanGrid({ S, me, isAdmin, act, days, activeEmployees }) {
                 ))}
               </tbody>
             </table>
+            {isAdmin && (() => {
+              const others = S.employees.filter((x) => x.active && !g.list.some((y) => y.id === x.id));
+              return others.length > 0 && (
+                <div className="px-3 py-2 sticky left-0" style={{ borderTop: `1px solid ${COLORS.panelBorder}`, maxWidth: 340 }}>
+                  <Select value="" onChange={(id) => id && setHome(id, g.loc)} className="text-xs">
+                    <option value="">+ Mitarbeiter zu {g.loc} hinzufügen…</option>
+                    {others.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
+                  </Select>
+                </div>
+              );
+            })()}
           </Panel>
         );
       })}
+      {pick && (
+        <Modal onClose={() => setPick(null)}>
+          <h3 className="text-sm font-medium mb-1" translate="no">{pick.emp.name}</h3>
+          <p className="text-xs mb-3" style={{ color: COLORS.textDim }}>{fmtDateLong(pick.date)}</p>
+          <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${L.length + 1}, minmax(0, 1fr))` }}>
+            {L.map((l) => { const c = dienstColor(S, l); return (
+              <button key={l} onClick={() => setCell(pick.emp.id, pick.date, l)} className="rounded-xl py-4 font-semibold text-sm" style={{ background: c.bg, color: c.fg }}>
+                <span translate="no">{shortLoc(l)}</span><div className="text-[10px] font-normal opacity-80" translate="no">{l}</div>
+              </button>
+            ); })}
+            <button onClick={() => setCell(pick.emp.id, pick.date, null)} className="rounded-xl py-4 font-semibold text-sm" style={{ background: FREI_COLOR.bg, color: FREI_COLOR.fg }}>Frei<div className="text-[10px] font-normal opacity-80">–</div></button>
+          </div>
+          <Btn kind="ghost" onClick={() => setPick(null)} className="w-full mt-3">Abbrechen</Btn>
+        </Modal>
+      )}
+      {nameEdit && <DienstNameModal S={S} emp={nameEdit} act={act} groupLoc={homeOf(S, nameEdit, days)} onClose={() => setNameEdit(null)} />}
       <div className="flex flex-wrap gap-2 text-[11px]">
         {L.map((l) => { const c = dienstColor(S, l); return <span key={l} className="px-2 py-0.5 rounded" style={{ background: c.bg, color: c.fg }}><span translate="no">{shortLoc(l)}</span> = {l}</span>; })}
         <span className="px-2 py-0.5 rounded" style={{ background: FREI_COLOR.bg, color: FREI_COLOR.fg }}>Frei</span>
