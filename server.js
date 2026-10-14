@@ -673,6 +673,8 @@ app.patch("/api/tasks/:id", requireUser, (req, res) => {
   const task = data.tasks.find((t) => t.id === req.params.id);
   if (!task || (req.auth.employee && !canSeeTask(task, req.auth.employee))) return res.status(404).json({ error: "Nicht gefunden." });
   if (!checkAssign(req, res)) return;
+  // Erledigte Aufgaben bleiben erledigt (nur Admins können sie zur Korrektur wieder öffnen)
+  if (task.status === "fertig" && (req.body || {}).status && req.body.status !== "fertig" && !req.auth.admin) return res.status(400).json({ error: "Erledigte Aufgaben können nicht mehr verschoben werden." });
   const before = task.employeeId;
   applyTaskFields(task, req.body || {});
   if (!task.title) return res.status(400).json({ error: "Titel erforderlich." });
@@ -685,6 +687,7 @@ app.patch("/api/tasks/:id", requireUser, (req, res) => {
 app.patch("/api/tasks/:id/move", requireUser, (req, res) => {
   const task = data.tasks.find((t) => t.id === req.params.id);
   if (!task || (req.auth.employee && !canSeeTask(task, req.auth.employee))) return res.status(404).json({ error: "Nicht gefunden." });
+  if (task.status === "fertig" && !req.auth.admin) return res.status(400).json({ error: "Erledigte Aufgaben können nicht mehr verschoben werden." });
   applyTaskFields(task, { status: (req.body || {}).status });
   persist();
   res.json(task);
@@ -1215,8 +1218,22 @@ function schedulerTick() {
   data.reminders = data.reminders.filter((r) => r.active || !r.lastFiredAt || now - r.lastFiredAt < 30 * 864e5);
   if (data.reminders.length !== before) changed = true;
 
-  const co = data.settings.clockout;
   const v = viennaParts(now);
+  // Erledigte Aufgaben am nächsten Tag automatisch löschen (inkl. Fotos)
+  const oldDone = data.tasks.filter((t) => {
+    if (t.status !== "fertig") return false;
+    if (!t.doneAt) { t.doneAt = now; changed = true; return false; } // ältere Einträge ohne Datum: ab heute zählen
+    return viennaParts(t.doneAt).date < v.date;
+  });
+  if (oldDone.length) {
+    const ids = new Set(oldDone.map((t) => t.id));
+    data.tasks = data.tasks.filter((t) => !ids.has(t.id));
+    data.reminders = data.reminders.filter((r) => !r.taskId || !ids.has(r.taskId));
+    deletePhotos(oldDone.flatMap((t) => (t.photos || []).map((p) => (typeof p === "string" ? p : p.id)))).catch(() => {});
+    changed = true;
+  }
+
+  const co = data.settings.clockout;
   if (co && co.enabled && v.hm >= co.time && data.settings.lastClockoutCheck !== v.date) {
     data.settings.lastClockoutCheck = v.date;
     changed = true;
