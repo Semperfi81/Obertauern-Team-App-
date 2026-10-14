@@ -471,6 +471,11 @@ Object.assign(window.I18N_DICT, {
 "Erledigte Aufgaben können nicht mehr verschoben werden.": ["Completed tasks can no longer be moved.", "Las tareas hechas ya no se pueden mover.", "As tarefas concluídas já não podem ser movidas.", "Hotové úlohy sa už nedajú presúvať.", "Završeni zadaci više se ne mogu premještati.", "A kész feladatok már nem helyezhetők át."]
 });
 
+Object.assign(window.I18N_DICT, {
+"Aufgaben werden von den Admins gestellt. Du kannst den Status ändern und Fotos hinzufügen.": ["Tasks are set by the admins. You can change the status and add photos.", "Las tareas las asignan los administradores. Puedes cambiar el estado y añadir fotos.", "As tarefas são definidas pelos administradores. Podes alterar o estado e adicionar fotos.", "Úlohy zadávajú admini. Môžeš meniť stav a pridávať fotky.", "Zadatke postavljaju admini. Možeš mijenjati status i dodavati fotografije.", "A feladatokat az adminok adják ki. Az állapotot módosíthatod és fotókat adhatsz hozzá."],
+"Nur Admins können Aufgaben stellen.": ["Only admins can create tasks.", "Solo los administradores pueden crear tareas.", "Só os administradores podem criar tarefas.", "Úlohy môžu zadávať len admini.", "Samo admini mogu postavljati zadatke.", "Feladatot csak admin adhat ki."]
+});
+
 // ---- Übersetzungs-Engine: übersetzt die deutsche Oberfläche im Browser ----
 (function () {
   var KEY = "team-app-lang";

@@ -217,10 +217,10 @@ function Field({ label, children, className = "" }) {
   );
 }
 function TextInput(props) {
-  return <input {...props} className={`w-full px-3 py-2 rounded-lg ${props.className || ""}`} style={inputStyle} />;
+  return <input {...props} className={`w-full px-3 py-2 rounded-lg ${props.className || ""}`} style={props.disabled ? { ...inputStyle, opacity: 0.6 } : inputStyle} />;
 }
-function Select({ value, onChange, children, className = "" }) {
-  return <select value={value} onChange={(e) => onChange(e.target.value)} className={`w-full px-3 py-2 rounded-lg ${className}`} style={inputStyle}>{children}</select>;
+function Select({ value, onChange, children, className = "", disabled }) {
+  return <select value={value} disabled={disabled} onChange={(e) => onChange(e.target.value)} className={`w-full px-3 py-2 rounded-lg ${className}`} style={disabled ? { ...inputStyle, opacity: 0.6 } : inputStyle}>{children}</select>;
 }
 function Segmented({ value, onChange, options }) {
   return (
@@ -1608,7 +1608,7 @@ function BoardView({ S, me, isAdmin, act }) {
   return (
     <div>
       <div className="flex gap-2 mb-4 flex-wrap items-center">
-        <Btn onClick={() => setEdit({})}>+ Neue Aufgabe</Btn>
+        {isAdmin && <Btn onClick={() => setEdit({})}>+ Neue Aufgabe</Btn>}
         <div className="w-44"><Select value={locFilter} onChange={setLocFilter} className="text-sm"><option value="">Alle Standorte</option>{S.locations.map((l) => <option key={l} value={l}>{l}</option>)}</Select></div>
         {isAdmin ? (
           <div className="w-44"><Select value={who} onChange={setWho} className="text-sm">
@@ -1697,7 +1697,7 @@ function TaskModal({ S, act, isAdmin, me, task: initialTask, onClose }) {
   const set = (k) => (v) => setF((p) => ({ ...p, [k]: v && v.target ? v.target.value : v }));
   async function save() {
     if (!f.title.trim()) return;
-    const body = { ...f, employeeId: f.employeeId || null, location: f.location || null, due: f.due || null };
+    const body = isAdmin ? { ...f, employeeId: f.employeeId || null, location: f.location || null, due: f.due || null } : { status: f.status };
     try {
       const saved = await act(task ? "/tasks/" + task.id : "/tasks", { method: task ? "PATCH" : "POST", body });
       if (!task && pending.length && saved && saved.id) {
@@ -1715,23 +1715,24 @@ function TaskModal({ S, act, isAdmin, me, task: initialTask, onClose }) {
   return (
     <Modal onClose={onClose} wide>
       <h3 className="text-sm font-medium mb-3">{task ? "Aufgabe" : "Neue Aufgabe"}</h3>
-      <Field label="Titel"><TextInput value={f.title} onChange={set("title")} autoFocus={!task} placeholder="z. B. Leihski für Reservierung herrichten" /></Field>
+      {!isAdmin && <p className="text-[11px] mb-3" style={{ color: COLORS.textDim }}>Aufgaben werden von den Admins gestellt. Du kannst den Status ändern und Fotos hinzufügen.</p>}
+      <Field label="Titel"><TextInput value={f.title} onChange={set("title")} autoFocus={!task} disabled={!isAdmin} placeholder="z. B. Leihski für Reservierung herrichten" /></Field>
       <Field label="Beschreibung">
-        <textarea value={f.description} onChange={set("description")} rows={3} className="w-full px-3 py-2 rounded-lg" style={inputStyle} placeholder="optional" />
+        <textarea value={f.description} onChange={set("description")} disabled={!isAdmin} rows={3} className="w-full px-3 py-2 rounded-lg" style={isAdmin ? inputStyle : { ...inputStyle, opacity: 0.6 }} placeholder={isAdmin ? "optional" : ""} />
       </Field>
       <div className="grid grid-cols-2 gap-2">
         <Field label="Zuständig">
-          <Select value={f.employeeId} onChange={set("employeeId")}>
+          <Select value={f.employeeId} onChange={set("employeeId")} disabled={!isAdmin}>
             <option value="">👥 Für alle (sieht jeder)</option>
             {S.employees.filter((e) => e.active && (isAdmin || e.id === me)).map((e) => <option key={e.id} value={e.id}>👤 {e.name}{isAdmin ? " (nur sichtbar für sie/ihn)" : ""}</option>)}
           </Select>
         </Field>
         <Field label="Standort">
-          <Select value={f.location} onChange={set("location")}><option value="">–</option>{S.locations.map((l) => <option key={l} value={l}>{l}</option>)}</Select>
+          <Select value={f.location} onChange={set("location")} disabled={!isAdmin}><option value="">–</option>{S.locations.map((l) => <option key={l} value={l}>{l}</option>)}</Select>
         </Field>
-        <Field label="Fällig am"><TextInput type="date" value={f.due} onChange={set("due")} /></Field>
+        <Field label="Fällig am"><TextInput type="date" value={f.due} onChange={set("due")} disabled={!isAdmin} className="disabled:opacity-60" /></Field>
         <Field label="Priorität">
-          <Select value={f.priority} onChange={set("priority")}>{Object.entries(PRIO).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}</Select>
+          <Select value={f.priority} onChange={set("priority")} disabled={!isAdmin}>{Object.entries(PRIO).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}</Select>
         </Field>
       </div>
       {task && task.status === "fertig" && !isAdmin && (
