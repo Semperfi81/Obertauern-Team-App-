@@ -299,7 +299,7 @@ app.get("/api/state", (req, res) => {
     tasks: admin ? data.tasks : data.tasks.filter((t) => canSeeTask(t, employee)),
     shifts: data.shifts,
     checklistTemplates: data.checklistTemplates,
-    checklistRuns: data.checklistRuns.filter((r) => r.date >= localDate(Date.now() - 14 * 864e5)),
+    checklistRuns: data.checklistRuns.filter((r) => r.cycle !== undefined || r.date >= localDate(Date.now() - 14 * 864e5)),
     messages: data.messages.slice(-200),
     reminders: data.reminders.filter((r) => canSeeReminder(r, admin, employee)),
     // Ideen & Notizen: Admins sehen alle, Mitarbeiter nur ihre eigenen
@@ -712,8 +712,33 @@ function templateFromBody(b, t) {
   if (!name) return { error: "Name erforderlich." };
   if (!items.length) return { error: "Mindestens ein Punkt erforderlich." };
   const area = str(b.area !== undefined ? b.area : b.location, 40);
-  return { ...(t || { id: uid() }), name, items, area: AREAS().includes(area) ? area : "Allgemein", location: null };
+  // mode: "daily" = jeden Tag neu, "once" = bleibt abgehakt, bis ein Admin sie neu startet
+  const mode = b.mode === "once" || b.mode === "daily" ? b.mode : (t && t.mode) || "daily";
+  return { ...(t || { id: uid() }), name, items, area: AREAS().includes(area) ? area : "Allgemein", location: null, mode, cycle: (t && t.cycle) || 1 };
 }
+// Aktueller Durchlauf einer Liste: täglich pro Datum, einmalige Listen pro Durchgang
+function runFor(tpl, date, create) {
+  let run = tpl.mode === "once"
+    ? data.checklistRuns.find((r) => r.templateId === tpl.id && r.cycle === (tpl.cycle || 1))
+    : data.checklistRuns.find((r) => r.templateId === tpl.id && r.date === date && r.cycle === undefined);
+  if (!run && create) {
+    run = tpl.mode === "once" ? { id: uid(), templateId: tpl.id, cycle: tpl.cycle || 1, date: localDate(), startedAt: Date.now(), checks: {} } : { id: uid(), templateId: tpl.id, date, checks: {} };
+    data.checklistRuns.push(run);
+  }
+  return run;
+}
+// Einmalige Liste neu starten (alle Haken weg, alter Durchgang bleibt im Verlauf)
+app.post("/api/checklists/templates/:id/restart", requireAdmin, (req, res) => {
+  const tpl = data.checklistTemplates.find((t) => t.id === req.params.id);
+  if (!tpl) return res.status(404).json({ error: "Nicht gefunden." });
+  tpl.cycle = (tpl.cycle || 1) + 1;
+  // nur die letzten 3 Durchgänge aufheben
+  const old = data.checklistRuns.filter((r) => r.templateId === tpl.id && r.cycle !== undefined && r.cycle < tpl.cycle - 3);
+  deletePhotos(old.flatMap((r) => Object.values(r.checks || {}).map((c) => c.photo).filter(Boolean))).catch(() => {});
+  data.checklistRuns = data.checklistRuns.filter((r) => !old.includes(r));
+  persist();
+  res.json(tpl);
+});
 
 app.post("/api/checklists/templates", requireAdmin, (req, res) => {
   const t = templateFromBody(req.body || {});
@@ -750,8 +775,7 @@ app.post("/api/checklists/check", requireUser, (req, res) => {
   const tpl = data.checklistTemplates.find((t) => t.id === templateId);
   if (!tpl || !tpl.items.includes(item)) return res.status(400).json({ error: "Checkliste oder Punkt nicht gefunden." });
   const who = req.auth.employee ? { by: req.auth.employee.id, byName: req.auth.employee.name } : { by: null, byName: req.auth.admin.name };
-  let run = data.checklistRuns.find((r) => r.templateId === templateId && r.date === date);
-  if (!run) { run = { id: uid(), templateId, date, checks: {} }; data.checklistRuns.push(run); }
+  const run = runFor(tpl, date, true);
   if (run.checks[item]) { const old = run.checks[item].photo; delete run.checks[item]; if (old) deletePhotos([old]).catch(() => {}); }
   else run.checks[item] = { ...who, at: Date.now() };
   persist();
@@ -767,8 +791,7 @@ app.post("/api/checklists/photo", requireUser, async (req, res) => {
   let photo;
   try { photo = await savePhoto(dataUrl); } catch (e) { return res.status(400).json({ error: e.message }); }
   const who = req.auth.employee ? { by: req.auth.employee.id, byName: req.auth.employee.name } : { by: null, byName: req.auth.admin.name };
-  let run = data.checklistRuns.find((r) => r.templateId === templateId && r.date === date);
-  if (!run) { run = { id: uid(), templateId, date, checks: {} }; data.checklistRuns.push(run); }
+  const run = runFor(tpl, date, true);
   const old = run.checks[item] && run.checks[item].photo;
   run.checks[item] = { ...who, at: Date.now(), photo };
   persist();
