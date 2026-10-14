@@ -658,6 +658,7 @@ function notifyTask(task, auth) {
 }
 
 app.post("/api/tasks", requireUser, (req, res) => {
+  if (!req.auth.admin) return res.status(403).json({ error: "Nur Admins können Aufgaben stellen." }); // Aufgaben stellen nur Admins
   const b = req.body || {};
   if (!str(b.title)) return res.status(400).json({ error: "Titel erforderlich." });
   if (!checkAssign(req, res)) return;
@@ -676,7 +677,8 @@ app.patch("/api/tasks/:id", requireUser, (req, res) => {
   // Erledigte Aufgaben bleiben erledigt (nur Admins können sie zur Korrektur wieder öffnen)
   if (task.status === "fertig" && (req.body || {}).status && req.body.status !== "fertig" && !req.auth.admin) return res.status(400).json({ error: "Erledigte Aufgaben können nicht mehr verschoben werden." });
   const before = task.employeeId;
-  applyTaskFields(task, req.body || {});
+  // Mitarbeiter dürfen nur den Status ändern (Offen → In Arbeit → Erledigt), nicht Inhalt oder Zuständigkeit
+  applyTaskFields(task, req.auth.admin ? (req.body || {}) : { status: (req.body || {}).status });
   if (!task.title) return res.status(400).json({ error: "Titel erforderlich." });
   persist();
   res.json(task);
