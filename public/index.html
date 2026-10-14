@@ -1466,6 +1466,7 @@ function ShiftModal({ S, act, init, onClose, activeEmployees }) {
 // =====================================================================
 // AUFGABEN (Board + To-Dos)
 // =====================================================================
+const DONE_GREEN = "#7FB069";
 const WORKFLOW_COLS = [
   { id: "offen", label: "Offen" },
   { id: "arbeit", label: "In Arbeit" },
@@ -1638,9 +1639,9 @@ function BoardView({ S, me, isAdmin, act }) {
                 {colTasks.map((t) => {
                   const overdue = t.due && t.due < today && t.status !== "fertig";
                   return (
-                    <div key={t.id} className="p-2.5 rounded-lg" style={{ background: COLORS.bg, border: `1px solid ${COLORS.panelBorder}`, borderLeft: `3px solid ${(PRIO[t.priority] || PRIO.normal).color}` }}>
+                    <div key={t.id} className="p-2.5 rounded-lg" style={{ background: t.status === "fertig" ? DONE_GREEN + "14" : COLORS.bg, border: `1px solid ${t.status === "fertig" ? DONE_GREEN + "55" : COLORS.panelBorder}`, borderLeft: `3px solid ${t.status === "fertig" ? DONE_GREEN : (PRIO[t.priority] || PRIO.normal).color}` }}>
                       <button onClick={() => setEdit({ task: t })} className="text-left w-full">
-                        <p className="text-sm" style={{ textDecoration: t.status === "fertig" ? "line-through" : "none", color: t.status === "fertig" ? COLORS.textDim : COLORS.text }}>{t.title}</p>
+                        <p className="text-sm font-medium" style={{ color: t.status === "fertig" ? DONE_GREEN : COLORS.text }}>{t.status === "fertig" ? "✓ " : ""}{t.title}</p>
                         {t.description && <p className="text-xs mt-0.5 line-clamp-2" style={{ color: COLORS.textDim }}>{t.description}</p>}
                       </button>
                       <div className="flex items-center justify-between mt-1.5 gap-2">
@@ -1651,7 +1652,8 @@ function BoardView({ S, me, isAdmin, act }) {
                           {(t.photos || []).length > 0 && <span>📷 {t.photos.length}</span>}
                         </div>
                         <div className="flex items-center gap-1 flex-shrink-0">
-                          {col.id !== "offen" && <button onClick={() => move(t, -1)} className="w-7 h-7 rounded-md" style={{ color: COLORS.textDim, border: `1px solid ${COLORS.panelBorder}` }} title="Zurück">‹</button>}
+                          {col.id === "fertig" && <span className="text-[10px]" style={{ color: DONE_GREEN }} title="wird morgen automatisch gelöscht">🗑 morgen</span>}
+                          {col.id === "arbeit" && <button onClick={() => move(t, -1)} className="w-7 h-7 rounded-md" style={{ color: COLORS.textDim, border: `1px solid ${COLORS.panelBorder}` }} title="Zurück">‹</button>}
                           {col.id !== "fertig" && <button onClick={() => move(t, 1)} className="w-7 h-7 rounded-md" style={{ color: COLORS.accent2, border: `1px solid ${COLORS.accent2}` }} title="Weiter">›</button>}
                         </div>
                       </div>
@@ -1732,8 +1734,11 @@ function TaskModal({ S, act, isAdmin, me, task: initialTask, onClose }) {
           <Select value={f.priority} onChange={set("priority")}>{Object.entries(PRIO).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}</Select>
         </Field>
       </div>
-      {task && (
-        <Field label="Status">
+      {task && task.status === "fertig" && !isAdmin && (
+        <p className="text-xs mb-3 px-3 py-2 rounded-lg" style={{ background: DONE_GREEN + "1a", color: DONE_GREEN }}>✓ Erledigt – wird morgen automatisch gelöscht.</p>
+      )}
+      {task && (task.status !== "fertig" || isAdmin) && (
+        <Field label={task.status === "fertig" ? "Status (nur Admin: zur Korrektur wieder öffnen)" : "Status"}>
           <Select value={f.status} onChange={set("status")}>{WORKFLOW_COLS.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}</Select>
         </Field>
       )}

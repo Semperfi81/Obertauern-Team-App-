@@ -463,6 +463,14 @@ Object.assign(window.I18N_DICT, {
 });
 window.I18N_PATTERNS.push(["💡 Ideen ({x})", ["💡 Ideas ({x})", "💡 Ideas ({x})", "💡 Ideias ({x})", "💡 Nápady ({x})", "💡 Ideje ({x})", "💡 Ötletek ({x})"]]);
 
+Object.assign(window.I18N_DICT, {
+"🗑 morgen": ["🗑 tomorrow", "🗑 mañana", "🗑 amanhã", "🗑 zajtra", "🗑 sutra", "🗑 holnap"],
+"wird morgen automatisch gelöscht": ["will be deleted automatically tomorrow", "se eliminará automáticamente mañana", "será eliminada automaticamente amanhã", "zajtra sa automaticky vymaže", "sutra će se automatski obrisati", "holnap automatikusan törlődik"],
+"✓ Erledigt – wird morgen automatisch gelöscht.": ["✓ Done – will be deleted automatically tomorrow.", "✓ Hecha – se eliminará automáticamente mañana.", "✓ Concluída – será eliminada automaticamente amanhã.", "✓ Hotové – zajtra sa automaticky vymaže.", "✓ Gotovo – sutra će se automatski obrisati.", "✓ Kész – holnap automatikusan törlődik."],
+"Status (nur Admin: zur Korrektur wieder öffnen)": ["Status (admin only: reopen to correct)", "Estado (solo admin: reabrir para corregir)", "Estado (só admin: reabrir para corrigir)", "Stav (len admin: znova otvoriť na opravu)", "Status (samo admin: ponovno otvori za ispravak)", "Állapot (csak admin: újranyitás javításhoz)"],
+"Erledigte Aufgaben können nicht mehr verschoben werden.": ["Completed tasks can no longer be moved.", "Las tareas hechas ya no se pueden mover.", "As tarefas concluídas já não podem ser movidas.", "Hotové úlohy sa už nedajú presúvať.", "Završeni zadaci više se ne mogu premještati.", "A kész feladatok már nem helyezhetők át."]
+});
+
 // ---- Übersetzungs-Engine: übersetzt die deutsche Oberfläche im Browser ----
 (function () {
   var KEY = "team-app-lang";
