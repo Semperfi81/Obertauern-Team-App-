@@ -1923,17 +1923,22 @@ function ChecklistenTab({ S, me, isAdmin, act, setError }) {
           </h3>
           <div className="grid sm:grid-cols-2 gap-3">
             {tpls.map((tpl) => {
-              const run = S.checklistRuns.find((r) => r.templateId === tpl.id && r.date === date);
+              const once = tpl.mode === "once";
+              const run = once
+                ? S.checklistRuns.find((r) => r.templateId === tpl.id && r.cycle === (tpl.cycle || 1))
+                : S.checklistRuns.find((r) => r.templateId === tpl.id && r.date === date && r.cycle === undefined);
               const checks = run ? run.checks : {};
               const done = tpl.items.filter((i) => checks[i]).length;
               const pct = Math.round((done / tpl.items.length) * 100);
-              const isOpen = open[tpl.id] ?? done < tpl.items.length;
+              const complete = done === tpl.items.length;
+              const lastAt = Math.max(0, ...Object.values(checks).map((c) => c.at || 0));
+              const isOpen = open[tpl.id] ?? !complete;
               return (
                 <Panel key={tpl.id} className="p-3">
                   <div className="flex items-center justify-between gap-2">
                     <button onClick={() => setOpen({ ...open, [tpl.id]: !isOpen })} className="flex-1 text-left">
                       <div className="flex items-center justify-between">
-                        <span className="text-sm font-medium">{done === tpl.items.length ? "✅ " : ""}{tpl.name}</span>
+                        <span className="text-sm font-medium">{complete ? "✅ " : ""}{tpl.name}{once && <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full align-middle" style={{ background: COLORS.accent + "22", color: COLORS.accent }}>bei Bedarf</span>}</span>
                         <span className="text-xs tabular-nums" style={{ color: COLORS.textDim }}>{done}/{tpl.items.length}</span>
                       </div>
                       <div className="h-1.5 rounded-full mt-2 overflow-hidden" style={{ background: COLORS.bg }}>
@@ -1942,6 +1947,12 @@ function ChecklistenTab({ S, me, isAdmin, act, setError }) {
                     </button>
                     {isAdmin && <button onClick={() => setEdit({ tpl })} className="text-xs px-1" style={{ color: COLORS.textDim }}>✎</button>}
                   </div>
+                  {once && complete && (
+                    <div className="flex items-center justify-between gap-2 mt-2 text-xs">
+                      <span style={{ color: COLORS.accent2 }}>✓ Abgeschlossen{lastAt ? <span>{" · " + new Date(lastAt).toLocaleDateString(window.I18N.locale, { day: "2-digit", month: "2-digit", year: "2-digit" })}</span> : null}</span>
+                      {isAdmin && <Btn kind="ghost" className="text-xs" onClick={() => confirm("Liste neu starten? Alle Haken werden zurückgesetzt.") && act("/checklists/templates/" + tpl.id + "/restart", { method: "POST" }).catch(() => {})}>↻ Neu starten</Btn>}
+                    </div>
+                  )}
                   {isOpen && (
                     <div className="mt-3 space-y-1">
                       {tpl.items.map((item) => (
@@ -1966,8 +1977,9 @@ function TemplateModal({ S, act, tpl, onClose }) {
   const [area, setArea] = useState(tpl ? tpl.area || "Allgemein" : (S.areas || ["Allgemein"])[0]);
   const areaOptions = [...(S.areas || [])]; if (area && !areaOptions.includes(area)) areaOptions.push(area);
   const [items, setItems] = useState(tpl ? tpl.items.join("\n") : "");
+  const [mode, setMode] = useState(tpl ? tpl.mode || "daily" : "daily");
   async function save() {
-    try { await act(tpl ? "/checklists/templates/" + tpl.id : "/checklists/templates", { method: tpl ? "PATCH" : "POST", body: { name, area, items } }); onClose(); } catch (e) {}
+    try { await act(tpl ? "/checklists/templates/" + tpl.id : "/checklists/templates", { method: tpl ? "PATCH" : "POST", body: { name, area, items, mode } }); onClose(); } catch (e) {}
   }
   async function del() {
     if (!confirm("Checkliste inkl. Verlauf löschen?")) return;
@@ -1978,6 +1990,12 @@ function TemplateModal({ S, act, tpl, onClose }) {
       <h3 className="text-sm font-medium mb-3">{tpl ? "Checkliste bearbeiten" : "Neue Checkliste"}</h3>
       <Field label="Name"><TextInput value={name} onChange={(e) => setName(e.target.value)} placeholder="z. B. Skiverleih öffnen" /></Field>
       <Field label="Bereich"><Select value={area} onChange={setArea}>{areaOptions.map((a) => <option key={a} value={a}>{a}</option>)}</Select></Field>
+      <Field label="Wie oft?">
+        <Select value={mode} onChange={setMode}>
+          <option value="daily">🔁 Täglich neu (z. B. Öffnen / Schließen)</option>
+          <option value="once">📌 Bei Bedarf – bleibt abgehakt, bis neu gestartet</option>
+        </Select>
+      </Field>
       <Field label="Punkte (einer pro Zeile)">
         <textarea value={items} onChange={(e) => setItems(e.target.value)} rows={8} className="w-full px-3 py-2 rounded-lg" style={inputStyle} />
       </Field>

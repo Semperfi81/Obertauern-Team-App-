@@ -476,6 +476,16 @@ Object.assign(window.I18N_DICT, {
 "Nur Admins können Aufgaben stellen.": ["Only admins can create tasks.", "Solo los administradores pueden crear tareas.", "Só os administradores podem criar tarefas.", "Úlohy môžu zadávať len admini.", "Samo admini mogu postavljati zadatke.", "Feladatot csak admin adhat ki."]
 });
 
+Object.assign(window.I18N_DICT, {
+"bei Bedarf": ["as needed", "según necesidad", "quando necessário", "podľa potreby", "po potrebi", "szükség szerint"],
+"✓ Abgeschlossen": ["✓ Completed", "✓ Completada", "✓ Concluída", "✓ Dokončené", "✓ Završeno", "✓ Kész"],
+"↻ Neu starten": ["↻ Restart", "↻ Reiniciar", "↻ Reiniciar", "↻ Spustiť znova", "↻ Pokreni ponovno", "↻ Újraindítás"],
+"Liste neu starten? Alle Haken werden zurückgesetzt.": ["Restart list? All ticks will be reset.", "¿Reiniciar la lista? Se borrarán todas las marcas.", "Reiniciar a lista? Todas as marcas serão apagadas.", "Spustiť zoznam znova? Všetky odškrtnutia sa zrušia.", "Ponovno pokrenuti listu? Sve oznake bit će poništene.", "Újraindítod a listát? Minden pipa törlődik."],
+"Wie oft?": ["How often?", "¿Con qué frecuencia?", "Com que frequência?", "Ako často?", "Koliko često?", "Milyen gyakran?"],
+"🔁 Täglich neu (z. B. Öffnen / Schließen)": ["🔁 New every day (e.g. opening / closing)", "🔁 Nueva cada día (p. ej. abrir / cerrar)", "🔁 Nova todos os dias (p. ex. abrir / fechar)", "🔁 Každý deň nanovo (napr. otvorenie / zatvorenie)", "🔁 Svaki dan nova (npr. otvaranje / zatvaranje)", "🔁 Minden nap új (pl. nyitás / zárás)"],
+"📌 Bei Bedarf – bleibt abgehakt, bis neu gestartet": ["📌 As needed – stays ticked until restarted", "📌 Según necesidad – queda marcada hasta reiniciar", "📌 Quando necessário – fica marcada até reiniciar", "📌 Podľa potreby – zostane odškrtnutý, kým sa nespustí znova", "📌 Po potrebi – ostaje označeno dok se ne pokrene ponovno", "📌 Szükség szerint – kipipálva marad újraindításig"]
+});
+
 // ---- Übersetzungs-Engine: übersetzt die deutsche Oberfläche im Browser ----
 (function () {
   var KEY = "team-app-lang";
