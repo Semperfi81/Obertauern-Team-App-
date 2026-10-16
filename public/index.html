@@ -2074,7 +2074,6 @@ function MonthView({ S, mode = "staff" }) {
   const emps = admins ? adminPersons(S) : S.employees.filter((e) => e.active || hasEntries(e.id));
   const prefix = admins ? "admin-stunden" : "stunden";
   const rows = emps.map((e) => ({ e, ...periodStats(S, e, dates) }));
-  const total = rows.reduce((s, r) => s + r.net, 0);
 
   function exportSummary() {
     const out = [[admins ? "Admin" : "Mitarbeiter", "Zeitraum", "Arbeitstage", "Netto (Std)", "Pausen gestempelt (Std)", ...(admins ? [] : ["Mittagspause automatisch (Std)", "Urlaubstage", "Krankentage"]), "Geplant (Std)", "Differenz (Std)", "Hinweise"]];
@@ -2140,13 +2139,6 @@ function MonthView({ S, mode = "staff" }) {
                 </React.Fragment>
               );
             })}
-            <tr style={{ borderTop: `1px solid ${COLORS.panelBorder}` }}>
-              <td className="p-3 font-medium">Gesamt</td><td></td>
-              <td className="p-3 text-right tabular-nums font-semibold" style={{ color: COLORS.accent }}>{fmtHours(total)}</td>
-              <td className="hidden sm:table-cell"></td>
-              {!admins && <td className="p-3 text-right tabular-nums" style={{ color: COLORS.textDim }}>{fmtHours(rows.reduce((s, r) => s + r.lunch, 0))}</td>}
-              <td colSpan={2}></td>
-            </tr>
           </tbody>
         </table>
       </Panel>
