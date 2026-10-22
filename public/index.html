@@ -1343,6 +1343,11 @@ function AbsenceModal({ S, isAdmin, act, onClose, initType }) {
       {isAdmin && (
         <Field label="Mitarbeiter"><Select value={f.employeeId} onChange={set("employeeId")}>{S.employees.filter((e) => e.active).map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}</Select></Field>
       )}
+      {f.type === "krank" && (
+        <div className="mb-3 px-3 py-2.5 rounded-lg text-sm font-semibold" style={{ background: COLORS.danger + "22", border: `1px solid ${COLORS.danger}`, color: COLORS.danger }}>
+          ⚠️ Krankmeldung erforderlich
+        </div>
+      )}
       <Field label="Art">
         <Select value={f.type} onChange={set("type")}><option value="urlaub">🏖 Urlaub</option><option value="krank">🤒 Krank</option><option value="sonstiges">📌 Sonstiges (z. B. Arzt, Schule)</option></Select>
       </Field>

@@ -486,6 +486,10 @@ Object.assign(window.I18N_DICT, {
 "📌 Bei Bedarf – bleibt abgehakt, bis neu gestartet": ["📌 As needed – stays ticked until restarted", "📌 Según necesidad – queda marcada hasta reiniciar", "📌 Quando necessário – fica marcada até reiniciar", "📌 Podľa potreby – zostane odškrtnutý, kým sa nespustí znova", "📌 Po potrebi – ostaje označeno dok se ne pokrene ponovno", "📌 Szükség szerint – kipipálva marad újraindításig"]
 });
 
+Object.assign(window.I18N_DICT, {
+"⚠️ Krankmeldung erforderlich": ["⚠️ Sick note required", "⚠️ Se requiere baja médica", "⚠️ Atestado médico obrigatório", "⚠️ Potrebná PN (lekárske potvrdenie)", "⚠️ Potrebna potvrda o bolovanju", "⚠️ Orvosi igazolás szükséges"]
+});
+
 // ---- Übersetzungs-Engine: übersetzt die deutsche Oberfläche im Browser ----
 (function () {
   var KEY = "team-app-lang";
