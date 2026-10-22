@@ -1,5 +1,5 @@
 // Team-App Service Worker – bei Änderungen am Frontend Versionsnummer erhöhen
-const CACHE_NAME = "team-app-v7";
+const CACHE_NAME = "team-app-v8";
 const PRECACHE = ["/", "/manifest.json", "/icon-192.png", "/icon-512.png"];
 
 self.addEventListener("install", (event) => {
