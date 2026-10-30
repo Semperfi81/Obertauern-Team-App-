@@ -12,8 +12,27 @@ const MAX_ADMINS = 5;
 const TZ = "Europe/Vienna";
 // Standorte (Zeiterfassung, Schichten, Aufgaben) und Bereiche (Checklisten) –
 // Startwerte, danach vom Admin in der App unter Auswertung → Einstellungen änderbar
-const DEFAULT_LOCATIONS = ["Haupt", "Grünwaldkopf"];
-const DEFAULT_AREAS = ["Skiverleih", "Alpine Mini Market", "Allgemein"];
+// ---------------------------------------------------------------------------
+// Branding & Demo-Modus (über Umgebungsvariablen bei Render)
+//  - ohne Variablen: alles wie bisher (Crew Sport Gefäll)
+//  - DEMO_PRESET=ski | hotel  -> Vorführversion mit erfundenen Daten,
+//                                wird jede Nacht um 03:00 zurückgesetzt
+//  - APP_NAME   = Name in der App (z. B. "Team App" oder Name des Betriebs)
+//  - APP_ICON   = Ordner unter public/brands/ für das Logo (z. B. "teamapp")
+//  - LOCATIONS / AREAS = Startwerte, durch Komma getrennt (nur für neue Installationen)
+// ---------------------------------------------------------------------------
+const { PRESETS } = require("./demo-presets");
+const DEMO_KEY = (process.env.DEMO_PRESET || "").trim().toLowerCase();
+const DEMO = PRESETS[DEMO_KEY] || null;
+if (DEMO_KEY && !DEMO) console.warn(`DEMO_PRESET "${DEMO_KEY}" unbekannt – erlaubt: ${Object.keys(PRESETS).join(", ")}`);
+const CUSTOM_BRAND = !!(process.env.APP_NAME || DEMO);
+const BRAND = {
+  name: process.env.APP_NAME || (DEMO ? "Team App" : "Crew Sport Gefäll"),
+  icon: (process.env.APP_ICON || (DEMO ? "teamapp" : "")).replace(/[^a-z0-9_-]/gi, ""),
+};
+const envList = (v) => (v || "").split(",").map((s) => s.trim()).filter(Boolean);
+const DEFAULT_LOCATIONS = DEMO ? DEMO.locations : envList(process.env.LOCATIONS).length ? envList(process.env.LOCATIONS) : CUSTOM_BRAND ? ["Betrieb"] : ["Haupt", "Grünwaldkopf"];
+const DEFAULT_AREAS = DEMO ? DEMO.areas : envList(process.env.AREAS).length ? envList(process.env.AREAS) : CUSTOM_BRAND ? ["Allgemein"] : ["Skiverleih", "Alpine Mini Market", "Allgemein"];
 // Automatische Mittagspause: wird pro Tag abgezogen, sobald mehr als minHours gearbeitet wurde.
 // Selbst gestempelte Pausen werden darauf angerechnet.
 const DEFAULT_LUNCH = { enabled: true, minutes: 60, minHours: 6 };
@@ -62,7 +81,9 @@ function normalize(d) {
   if (!Array.isArray(d.settings.areas) || !d.settings.areas.length) d.settings.areas = DEFAULT_AREAS.slice();
   if (!d.settings.lunch) d.settings.lunch = { ...DEFAULT_LUNCH };
   if (!d.settings.clockout) d.settings.clockout = { ...DEFAULT_CLOCKOUT };
-  if (!d.settings.dienst) d.settings.dienst = { ...DEFAULT_DIENST };
+  if (!d.settings.dienst) d.settings.dienst = { ...(DEMO ? DEMO.dienst : DEFAULT_DIENST) };
+  // Einmalige Anpassungen nur für die Installation von Sport Gefäll
+  if (CUSTOM_BRAND) { d.settings.homeFixGW = true; d.settings.winter2026 = true; }
   // Einmalig: Stammfiliale Grünwaldkopf für Peter Moisl-Posch, Karin und Marco (Wunsch von Peter)
   if (!d.settings.homeFixGW) {
     const gw = d.settings.locations.find((l) => /grün/i.test(l));
@@ -273,7 +294,8 @@ function runningEntry(employeeId) {
 // ---------------------------------------------------------------------------
 app.get("/api/state", (req, res) => {
   const { admin, employee } = getAuth(req);
-  const base = { locations: LOCS(), areas: AREAS(), lunch: data.settings.lunch, clockout: data.settings.clockout, dienst: data.settings.dienst, today: localDate(), adminCount: data.admins.length };
+  const base = { locations: LOCS(), areas: AREAS(), lunch: data.settings.lunch, clockout: data.settings.clockout, dienst: data.settings.dienst, today: localDate(), adminCount: data.admins.length,
+    demo: DEMO ? { label: DEMO.label, admin: DEMO.admin.name, adminPin: DEMO.admin.pin, employeePin: DEMO.employeePin } : null };
   if (!admin && !employee) {
     // Nicht angemeldet: nur Namen für die Login-Auswahl
     return res.json({
@@ -946,7 +968,7 @@ app.post("/api/shifts/copy-week", requireAdmin, (req, res) => {
 function setupPush() {
   if (!webpush) return;
   if (!data.vapid || !data.vapid.publicKey) { data.vapid = webpush.generateVAPIDKeys(); persist(); }
-  webpush.setVapidDetails(process.env.VAPID_SUBJECT || "mailto:team@sport-gefaell.at", data.vapid.publicKey, data.vapid.privateKey);
+  webpush.setVapidDetails(process.env.VAPID_SUBJECT || (CUSTOM_BRAND ? "mailto:noreply@example.com" : "mailto:team@sport-gefaell.at"), data.vapid.publicKey, data.vapid.privateKey);
 }
 function ownerOf(auth) {
   return auth.employee ? auth.employee.id : "admin:" + auth.admin.id;
@@ -999,7 +1021,7 @@ app.post("/api/push/unsubscribe", (req, res) => {
 
 app.post("/api/push/test", requireUser, async (req, res) => {
   const me = ownerOf(req.auth);
-  const sent = await pushTo((s) => s.ownerId === me, { title: "Crew Sport Gefäll", body: "Benachrichtigungen funktionieren ✓", tag: "test", url: "/" });
+  const sent = await pushTo((s) => s.ownerId === me, { title: BRAND.name, body: "Benachrichtigungen funktionieren ✓", tag: "test", url: "/" });
   res.json({ sent });
 });
 
@@ -1440,7 +1462,34 @@ app.delete("/api/chat/:id", requireUser, (req, res) => {
 // ---------------------------------------------------------------------------
 // Statisches Frontend
 // ---------------------------------------------------------------------------
-app.use(express.static(path.join(__dirname, "public"), {
+// Name und Logo je nach Branding in HTML, Manifest und Service Worker einsetzen
+const PUBLIC_DIR = path.join(__dirname, "public");
+function branded(text) {
+  if (!CUSTOM_BRAND) return text;
+  let t = text.split("Crew Sport Gefäll – Team-App").join(BRAND.name)
+    .split("Crew Sport Gefäll").join(BRAND.name)
+    .split("Tippe auf ein Feld für Haupt / Grün / Frei").join("Tippe auf ein Feld für Standort / Frei")
+    .split('apple-mobile-web-app-title" content="Team-App"').join(`apple-mobile-web-app-title" content="${BRAND.name.replace(/"/g, "")}"`);
+  if (BRAND.icon) t = t.replace(/\/icon-(192|512)\.png(\?v=\d+)?/g, `/brands/${BRAND.icon}/icon-$1.png`);
+  return t;
+}
+function sendBranded(file, type) {
+  return (req, res) => {
+    fs.readFile(path.join(PUBLIC_DIR, file), "utf8", (err, text) => {
+      if (err) return res.status(404).end();
+      res.setHeader("Content-Type", type);
+      res.setHeader("Cache-Control", "no-cache");
+      res.send(branded(text));
+    });
+  };
+}
+const sendIndex = sendBranded("index.html", "text/html; charset=utf-8");
+app.get(["/", "/index.html"], sendIndex);
+app.get("/manifest.json", sendBranded("manifest.json", "application/manifest+json; charset=utf-8"));
+app.get("/service-worker.js", sendBranded("service-worker.js", "application/javascript; charset=utf-8"));
+
+app.use(express.static(PUBLIC_DIR, {
+  index: false,
   setHeaders: (res, file) => {
     // Service Worker und HTML nie lange cachen, damit Updates sofort ankommen
     if (file.endsWith("service-worker.js") || file.endsWith(".html")) res.setHeader("Cache-Control", "no-cache");
@@ -1448,17 +1497,123 @@ app.use(express.static(path.join(__dirname, "public"), {
 }));
 app.get("*", (req, res) => {
   if (req.path.startsWith("/api/")) return res.status(404).json({ error: "Not found" });
-  res.sendFile(path.join(__dirname, "public", "index.html"));
+  sendIndex(req, res);
 });
+
+// ---------------------------------------------------------------------------
+// Demo-Modus: erfundene Daten anlegen und jede Nacht zurücksetzen
+// ---------------------------------------------------------------------------
+function buildDemoData(keep) {
+  const P = DEMO;
+  data = normalize(emptyData());
+  if (keep && keep.secrets) data.secrets = keep.secrets;   // PIN-Schlüssel behalten
+  if (keep && keep.vapid) data.vapid = keep.vapid;         // Push-Schlüssel behalten
+  data.settings.dienst = { ...P.dienst };
+  data.settings.demoSeededAt = Date.now();
+  const today = localDate();
+  const day = (n) => addDaysISO(today, n);
+  const at = (date, hm, jitterMin = 0) => viennaToMs(date, hm) + Math.round((Math.random() * 2 - 1) * jitterMin) * 60000;
+
+  // Admin
+  const salt = uid();
+  const admin = { id: uid(), name: P.admin.name, salt, pinHash: hashPin(P.admin.pin, salt), token: uid() + uid() };
+  data.admins.push(admin);
+
+  // Mitarbeiter
+  const byName = {};
+  P.employees.forEach((e) => {
+    const emp = { id: uid(), name: e.name, active: true, weeklyHours: e.weeklyHours, home: e.home };
+    setEmployeePin(emp, P.employeePin);
+    data.employees.push(emp);
+    byName[e.name] = emp;
+  });
+  const who = (n) => (n && byName[n] ? byName[n].id : null);
+  const author = (n) => (n === P.admin.name ? { authorId: "admin:" + admin.id, authorName: admin.name, isAdmin: true } : { authorId: who(n), authorName: n, isAdmin: false });
+
+  // Schichten: letzte, diese und nächste Woche (Mo–So), jeder hat 2 freie Tage
+  const dow = new Date(today + "T12:00:00Z").getUTCDay();
+  const monday = day(-((dow + 6) % 7) - 7);
+  P.employees.forEach((e, i) => {
+    const off = [(i * 2) % 7, (i * 2 + 1) % 7];
+    for (let d = 0; d < 21; d++) {
+      if (off.includes(d % 7)) continue;
+      data.shifts.push({ id: uid(), employeeId: byName[e.name].id, date: addDaysISO(monday, d), start: e.start, end: e.end, location: e.home, note: "" });
+    }
+  });
+
+  // Gestempelte Zeiten der letzten 10 Tage laut Schichtplan; heute laufen die Frühschichten
+  const nowHM = viennaParts(Date.now()).hm;
+  data.shifts.filter((s) => s.date >= day(-10) && s.date <= today).forEach((s) => {
+    if (s.date === today) {
+      if (s.start > nowHM) return;
+      data.timeEntries.push({ id: uid(), employeeId: s.employeeId, date: s.date, start: at(s.date, s.start, 6), end: s.end <= nowHM ? at(s.date, s.end, 8) : null, breaks: [], location: s.location, note: "", manualBreakMin: null });
+      return;
+    }
+    const start = at(s.date, s.start, 6), end = at(s.date, s.end, 10);
+    const breaks = (end - start) / 36e5 > 6 ? [{ start: start + 4 * 36e5, end: start + 4 * 36e5 + (30 + Math.round(Math.random() * 30)) * 60000 }] : [];
+    data.timeEntries.push({ id: uid(), employeeId: s.employeeId, date: s.date, start, end, breaks, location: s.location, note: "", manualBreakMin: null });
+  });
+
+  // Checklisten (heutige Öffnungs-Listen teilweise abgehakt)
+  P.checklists.forEach((c, i) => {
+    const t = { id: uid(), name: c.name, items: c.items.slice(), area: c.area, location: null, mode: c.mode || "daily", cycle: 1 };
+    data.checklistTemplates.push(t);
+    if (i === 0 || i === 2) {
+      const emp = data.employees[i % data.employees.length];
+      const checks = {};
+      t.items.slice(0, Math.ceil(t.items.length * 0.6)).forEach((it, k) => { checks[it] = { by: emp.id, byName: emp.name, at: Date.now() - (90 - k * 5) * 60000 }; });
+      data.checklistRuns.push({ id: uid(), templateId: t.id, date: today, checks });
+    }
+  });
+
+  // Aufgaben, To-dos, Chat, Ideen, Erinnerungen
+  P.tasks.forEach((t, i) => data.tasks.push({
+    id: uid(), title: t.title, description: t.description || "", employeeId: who(t.who), status: t.status, location: t.location,
+    due: day(t.due), priority: t.priority, createdAt: Date.now() - (3 + i) * 864e5 / 2, doneAt: t.status === "fertig" ? Math.max(viennaToMs(today, "00:05"), Date.now() - 2 * 36e5) : null,
+  }));
+  P.todos.forEach((t) => data.todos.push({ id: uid(), employeeId: who(t.who), text: t.text, due: day(t.due), done: false }));
+  P.messages.forEach((m) => data.messages.push({ id: uid(), text: m.text, photos: [], at: Date.now() - m.ago * 60000, ...author(m.who) }));
+  P.ideas.forEach((x, i) => data.ideas.push({ id: uid(), text: x.text, photos: [], at: Date.now() - (i + 1) * 2 * 864e5, status: x.status, reply: x.reply, area: "", ...author(x.who) }));
+  P.reminders.forEach((r) => {
+    const rem = { id: uid(), createdAt: Date.now(), createdBy: "admin:" + admin.id, createdByName: admin.name, lastFiredAt: null, text: r.text, date: today, time: r.time, repeat: r.repeat, target: r.target, taskId: null };
+    rem.nextAt = nextOccurrence(rem, Date.now());
+    rem.active = rem.nextAt !== null;
+    data.reminders.push(rem);
+  });
+
+  // Abwesenheiten: ein offener Urlaubsantrag, eine Krankmeldung
+  const e1 = data.employees[1], e2 = data.employees[data.employees.length - 1];
+  data.absences.push({ id: uid(), employeeId: e1.id, type: "urlaub", from: day(9), to: day(11), note: "Familienfeier", createdAt: Date.now() - 864e5, status: "offen", decidedBy: null });
+  data.absences.push({ id: uid(), employeeId: e2.id, type: "krank", from: day(-1), to: day(0), note: "", createdAt: Date.now() - 864e5, status: "genehmigt", decidedBy: null });
+  return data;
+}
+
+async function resetDemo(reason) {
+  const keep = { secrets: data.secrets, vapid: data.vapid };
+  data = buildDemoData(keep);
+  if (pgPool) await pgPool.query("DELETE FROM photos").catch(() => {});
+  else fs.rmSync(path.join(DATA_DIR, "photos"), { recursive: true, force: true });
+  await flush();
+  console.log(`Demo (${DEMO.label}) neu angelegt: ${reason}`);
+}
+
+function demoTick() {
+  const cutoff = viennaToMs(viennaParts(Date.now()).date, "03:00");
+  if (Date.now() >= cutoff && (data.settings.demoSeededAt || 0) < cutoff) resetDemo("nächtlicher Reset").catch((e) => console.error("Demo-Reset:", e.message));
+}
 
 const PORT = process.env.PORT || 3000;
 loadData()
-  .then((d) => {
+  .then(async (d) => {
     data = d;
+    if (DEMO) {
+      if (!data.admins.length) await resetDemo("erster Start");
+      setInterval(demoTick, 60000);
+    }
     setupPush();
     setInterval(() => { try { schedulerTick(); } catch (e) { console.error("Zeitplaner:", e.message); } }, 30000);
     setTimeout(() => { try { schedulerTick(); } catch (e) {} }, 5000);
-    app.listen(PORT, () => console.log(`Team-App läuft auf Port ${PORT} (${pgPool ? "Postgres" : "Datei: " + DATA_FILE})`));
+    app.listen(PORT, () => console.log(`Team-App "${BRAND.name}"${DEMO ? " – DEMO " + DEMO.label : ""} läuft auf Port ${PORT} (${pgPool ? "Postgres" : "Datei: " + DATA_FILE})`));
   })
   .catch((e) => {
     console.error("Start fehlgeschlagen:", e);

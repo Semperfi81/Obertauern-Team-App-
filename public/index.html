@@ -391,6 +391,7 @@ function App() {
           </div>
         </header>
 
+        {S.demo && <DemoBanner demo={S.demo} />}
         {offline && (
           <div className="mb-3 px-3 py-2 rounded-lg text-xs" style={{ background: COLORS.warn + "22", border: `1px solid ${COLORS.warn}`, color: COLORS.warn }}>
             Keine Verbindung zum Server – Anzeige ist evtl. nicht aktuell.
@@ -479,6 +480,24 @@ function LangPicker({ compact }) {
   );
 }
 
+// Hinweis in Demoversionen: Zugangsdaten + nächtlicher Reset
+function DemoBanner({ demo, login }) {
+  const box = { background: COLORS.accent + "18", border: `1px solid ${COLORS.accent}66`, color: COLORS.text };
+  if (!login) return (
+    <div className="mb-3 px-3 py-2 rounded-lg text-xs" style={box}>
+      <b style={{ color: COLORS.accent }}>Demoversion</b> · {demo.label} · Alle Daten sind erfunden und werden jede Nacht zurückgesetzt.
+    </div>
+  );
+  return (
+    <div className="mb-3 px-3 py-2.5 rounded-lg text-xs leading-relaxed" style={box}>
+      <div className="font-semibold mb-1" style={{ color: COLORS.accent }}>Demoversion · {demo.label}</div>
+      <div>👤 Mitarbeiter: Namen wählen, PIN <b>{demo.employeePin}</b></div>
+      <div>🔒 Admin: Name <b>{demo.admin}</b>, PIN <b>{demo.adminPin}</b></div>
+      <div className="mt-1" style={{ color: COLORS.textDim }}>Alle Daten sind erfunden und werden jede Nacht zurückgesetzt.</div>
+    </div>
+  );
+}
+
 function LoginScreen({ S, offline, onDone, openAdmin }) {
   const [empId, setEmpId] = useState(() => store.get(LAST_EMP_KEY) || "");
   const [pin, setPin] = useState("");
@@ -518,6 +537,7 @@ function LoginScreen({ S, offline, onDone, openAdmin }) {
           <p className="text-sm" style={{ color: COLORS.textDim }}>Team-App · Anmeldung</p>
         </div>
         <LangPicker />
+        {S.demo && <DemoBanner demo={S.demo} login />}
         {offline && <p className="text-xs mb-3 text-center" style={{ color: COLORS.warn }}>Keine Verbindung zum Server.</p>}
         <Panel>
           {list.length === 0 ? (
