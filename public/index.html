@@ -20,7 +20,8 @@
 <style>
   html, body { margin:0; padding:0; background:#15171C; }
   * { box-sizing: border-box; }
-  body { padding-bottom: env(safe-area-inset-bottom); }
+  /* iPhone: Inhalt nicht unter Uhr/Notch und Home-Leiste */
+  body { padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom); }
   .scrollbar-thin::-webkit-scrollbar { width: 6px; height: 6px; }
   .scrollbar-thin::-webkit-scrollbar-thumb { background: #2A2E38; border-radius: 4px; }
   button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px solid #E8A33D; outline-offset: 2px; }
@@ -185,7 +186,7 @@ function Modal({ children, onClose, wide }) {
     window.addEventListener("keydown", h); return () => window.removeEventListener("keydown", h);
   }, [onClose]);
   return (
-    <div className="fixed inset-0 flex items-end sm:items-center justify-center z-50 sm:px-4" style={{ background: "rgba(0,0,0,0.65)" }}
+    <div className="fixed inset-0 flex items-end sm:items-center justify-center z-50 sm:px-4" style={{ background: "rgba(0,0,0,0.65)", paddingTop: "env(safe-area-inset-top)" }}
       onMouseDown={(e) => e.target === e.currentTarget && onClose && onClose()}>
       <div className={`w-full ${wide ? "sm:max-w-lg" : "sm:max-w-sm"} max-h-[92vh] overflow-y-auto scrollbar-thin rounded-t-2xl sm:rounded-xl p-4`}
         style={{ background: COLORS.panel, border: `1px solid ${COLORS.panelBorder}` }}>
@@ -2599,7 +2600,7 @@ function PhotoViewer({ url, onClose }) {
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center p-2" style={{ background: "rgba(0,0,0,0.92)" }} onClick={onClose}>
       <img src={url} alt="Foto" className="max-w-full max-h-full object-contain rounded-lg" />
-      <button onClick={onClose} className="absolute top-3 right-3 w-10 h-10 rounded-full text-lg" style={{ background: "rgba(255,255,255,0.15)", color: "#fff" }}>✕</button>
+      <button onClick={onClose} className="absolute right-3 w-10 h-10 rounded-full text-lg" style={{ top: "calc(env(safe-area-inset-top) + 12px)", background: "rgba(255,255,255,0.15)", color: "#fff" }}>✕</button>
       <a href={url} download="foto.jpg" onClick={(e) => e.stopPropagation()} className="absolute bottom-4 right-4 px-3 py-2 rounded-lg text-sm" style={{ background: "rgba(255,255,255,0.15)", color: "#fff" }}>⬇ Speichern</a>
     </div>
   );
