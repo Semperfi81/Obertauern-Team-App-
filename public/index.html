@@ -263,8 +263,101 @@ const TABS = [
 ];
 const ADMIN_TAB = { id: "admin", label: "Auswertung", icon: "📊" };
 
+// ---------- Hilfe (ℹ️-Knopf): Erklärung je Bereich, Admin-Teil nur für Admins ----------
+const HELP = [
+  { id: "start", icon: "👋", label: "Erste Schritte", all: [
+    ["App aufs Handy holen", "Seite im Browser öffnen → im Menü „Zum Startbildschirm hinzufügen“ (iPhone: Teilen-Symbol, Android: ⋮). Danach startet die App wie eine normale App."],
+    ["Anmelden", "Namen auswählen und PIN eingeben. Bei der allerersten Anmeldung legst du deine PIN selbst fest. PIN vergessen? Ein Admin kann sie dir sagen. Die PIN änderst du oben über 🔑."],
+    ["Benachrichtigungen", "Erlaube Benachrichtigungen, wenn die App fragt. Dann bekommst du neue Aufgaben, Schichten, Chat-Nachrichten und Erinnerungen direkt aufs Handy."],
+    ["Sprache", "Über die Flagge oben stellst du die Sprache der App um."],
+  ], admin: [
+    ["Einrichten in 4 Schritten", "1. Auswertung → 👥 Team: Mitarbeiter anlegen. 2. Auswertung → ⚙️ Einstellungen: Standorte und Bereiche anpassen. 3. Listen: Checklisten anlegen. 4. Dienstplan: Woche befüllen und mit „Woche kopieren“ fortsetzen."],
+  ] },
+  { id: "zeit", icon: "🕒", label: "Zeit", all: [
+    ["Einstempeln", "Standort wählen und ▶ Start tippen. Die Zeit läuft, bis du ■ Ende tippst – auch wenn du die App schließt."],
+    ["Pause", "⏸ Pause startet die Pause, ▶ Weiter beendet sie. Ab einer bestimmten Arbeitszeit wird die Mittagspause automatisch abgezogen; selbst gestempelte Pausen werden angerechnet."],
+    ["Vergessen auszustempeln?", "Am Abend erinnert dich die App, falls du noch eingestempelt bist. Falsche Zeiten kann ein Admin korrigieren."],
+    ["Meine Übersicht", "Unten siehst du deine Stunden, Arbeitstage und geplanten Stunden im aktuellen Monat. Mit „Woche“ schaltest du auf die Wochenansicht."],
+  ], admin: [
+    ["Für andere stempeln", "Unter „Mitarbeiter“ kannst du für jede Person ein- und ausstempeln, z. B. wenn jemand kein Handy dabei hat."],
+    ["Meine Admin-Zeit", "Deine eigene Arbeitszeit als Admin. Sie ist nur für Admins sichtbar und wird getrennt ausgewertet."],
+  ] },
+  { id: "schichten", icon: "📅", label: "Dienstplan", all: [
+    ["Wochenplan", "Zeigt, wer wann an welchem Standort arbeitet. Mit ‹ › blätterst du zwischen den Wochen. „Details“ zeigt die genauen Uhrzeiten."],
+    ["Urlaub & Krankheit", "🏖 Urlaub beantragen: Ein Admin bestätigt oder lehnt ab, du bekommst eine Nachricht. 🤒 Krank melden gilt sofort. Kollegen sehen nur „abwesend“, nicht den Grund."],
+  ], admin: [
+    ["Dienste eintragen", "Tippe auf ein Feld, um zwischen den Standorten und „Frei“ zu wechseln. Tippe auf einen Namen, um ihn zu ändern oder die Filiale zu wechseln."],
+    ["Schneller planen", "„Woche kopieren“ übernimmt die ganze Woche in die nächste. „Aus Excel“ liest einen bestehenden Dienstplan ein (Datei wählen oder Tabelle kopieren und einfügen)."],
+    ["Anträge", "Offene Urlaubsanträge erscheinen oben unter „Offene Anträge“ – mit ✓ genehmigen oder ✕ ablehnen."],
+  ] },
+  { id: "aufgaben", icon: "📋", label: "Aufgaben", all: [
+    ["Board", "Aufgaben wandern von „Offen“ über „In Arbeit“ zu „Erledigt“. Tippe auf eine Aufgabe für Details und Fotos, mit dem Pfeil schiebst du sie weiter. Erledigte Aufgaben sind gesperrt und verschwinden am nächsten Tag."],
+    ["To-Dos", "Deine persönliche Merkliste – kleine Dinge, die nur dich betreffen."],
+    ["Erinnerungen", "Lass dich zu einer Uhrzeit erinnern, einmalig oder wiederholt (täglich, werktags, wöchentlich). Die Erinnerung kommt als Benachrichtigung mit Ton."],
+    ["💡 Ideen", "Verbesserungsvorschläge für den Betrieb oder die App – gerne mit Foto. Die Admins antworten dir direkt dort."],
+  ], admin: [
+    ["Aufgaben stellen", "„+ Neue Aufgabe“: Titel, Beschreibung, Standort, Fälligkeit und Priorität festlegen und einer Person oder „Für alle“ zuweisen. Die Person bekommt eine Benachrichtigung. Mitarbeiter können nur den Status ändern."],
+    ["Erinnerungen für das Team", "Admins können Erinnerungen für eine Person oder für alle anlegen, z. B. täglich um 17:45."],
+  ] },
+  { id: "checklisten", icon: "☑️", label: "Listen", all: [
+    ["Abhaken", "Tippe auf einen Punkt, um ihn abzuhaken – dein Name und die Uhrzeit werden gespeichert. Mit 📷 hakst du mit Foto als Nachweis ab."],
+    ["Tägliche und einmalige Listen", "Tägliche Listen (z. B. Öffnen/Schließen) beginnen jeden Tag neu. Einmalige Listen (z. B. Inventur) bleiben abgehakt, bis ein Admin sie neu startet. Mit ‹ siehst du die letzten Tage."],
+  ], admin: [
+    ["Listen anlegen", "„+ Neue Checkliste“: Name, Bereich, täglich oder einmalig und die einzelnen Punkte (ein Punkt pro Zeile). Mit ✎ bearbeiten."],
+  ] },
+  { id: "chat", icon: "💬", label: "Chat", all: [
+    ["Team-Chat", "Ein gemeinsamer Chat für das ganze Team, auch mit Fotos. Neue Nachrichten kommen als Benachrichtigung. Eigene Nachrichten kannst du löschen."],
+  ], admin: [
+    ["Moderieren", "Admins können jede Nachricht löschen."],
+  ] },
+  { id: "admin", icon: "📊", label: "Auswertung", adminOnly: true, all: [], admin: [
+    ["📊 Stunden", "Stunden pro Mitarbeiter für Tag, Woche oder Monat – mit den geplanten Stunden aus dem Dienstplan zum Vergleich. Als CSV für Excel oder die Lohnverrechnung herunterladen."],
+    ["✎ Einträge", "Einzelne Stempelzeiten ansehen, korrigieren, löschen oder nachtragen (z. B. wenn jemand vergessen hat zu stempeln)."],
+    ["🔒 Admin-Zeiten", "Die Arbeitszeiten der Admins, getrennt vom Team."],
+    ["👥 Team", "Mitarbeiter anlegen, deaktivieren, Stammfiliale und Soll-Stunden festlegen, PIN anzeigen oder zurücksetzen. Weitere Admins hinzufügen."],
+    ["⚙️ Einstellungen", "Standorte, Checklisten-Bereiche, automatische Mittagspause, Abend-Erinnerung zum Ausstempeln und Standard-Dienstzeit."],
+  ] },
+];
+
+function HelpModal({ isAdmin, tab, onClose }) {
+  const list = HELP.filter((h) => isAdmin || !h.adminOnly);
+  const [cur, setCur] = useState(list.some((h) => h.id === tab) ? tab : "start");
+  const h = list.find((x) => x.id === cur) || list[0];
+  const Item = ([title, text]) => (
+    <div key={title} className="mb-3">
+      <div className="text-sm font-semibold mb-0.5">{title}</div>
+      <div className="text-sm leading-relaxed" style={{ color: COLORS.textDim }}>{text}</div>
+    </div>
+  );
+  return (
+    <Modal onClose={onClose} wide>
+      <div className="flex items-center justify-between mb-3">
+        <h2 className="text-base font-semibold">ℹ️ So funktioniert's</h2>
+        <button onClick={onClose} className="w-8 h-8 rounded-full text-lg" style={{ color: COLORS.textDim }} aria-label="Schließen">✕</button>
+      </div>
+      <div className="flex gap-1.5 overflow-x-auto scrollbar-thin pb-2 mb-3">
+        {list.map((x) => (
+          <button key={x.id} onClick={() => setCur(x.id)} className="px-3 py-1.5 rounded-full text-xs whitespace-nowrap flex-shrink-0"
+            style={x.id === cur ? { background: COLORS.accent, color: "#1A1A1A" } : { border: `1px solid ${COLORS.panelBorder}`, color: COLORS.textDim }}>
+            {x.icon} {x.label}
+          </button>
+        ))}
+      </div>
+      {h.all.map(Item)}
+      {isAdmin && h.admin.length > 0 && (
+        <div className="mt-2 pt-3" style={{ borderTop: `1px solid ${COLORS.panelBorder}` }}>
+          <div className="text-[11px] uppercase tracking-wide mb-2" style={{ color: COLORS.accent }}>🔒 Für Admins</div>
+          {h.admin.map(Item)}
+        </div>
+      )}
+      <Btn onClick={onClose} className="w-full py-2.5 mt-2">Verstanden</Btn>
+    </Modal>
+  );
+}
+
 function App() {
   const [loading, setLoading] = useState(true);
+  const [showHelp, setShowHelp] = useState(false);
   const [error, setError] = useState("");
   const [offline, setOffline] = useState(false);
   const [tab, setTab] = useState(() => {
@@ -380,6 +473,7 @@ function App() {
             </div>
           </div>
           <div className="flex items-center gap-1.5 flex-shrink-0">
+            <button onClick={() => setShowHelp(true)} title="Hilfe" aria-label="Hilfe" className="w-8 h-8 rounded-full text-sm font-semibold" style={{ border: `1px solid ${COLORS.panelBorder}`, color: COLORS.textDim }}>i</button>
             <LangPicker compact />
             {!isAdmin && (
               <button onClick={() => setAuthView("pin")} title="PIN ändern" className="px-2.5 py-1.5 rounded-full text-xs" style={{ border: `1px solid ${COLORS.panelBorder}`, color: COLORS.textDim }}>🔑</button>
@@ -425,6 +519,7 @@ function App() {
         {tab === "checklisten" && <ChecklistenTab {...ctx} />}
         {tab === "chat" && <ChatTab {...ctx} />}
         {tab === "admin" && isAdmin && <AdminTab {...ctx} />}
+        {showHelp && <HelpModal isAdmin={isAdmin} tab={tab} onClose={() => setShowHelp(false)} />}
       </div>
 
       <nav className="sm:hidden fixed bottom-0 left-0 right-0 flex z-40" style={{ background: COLORS.panel, borderTop: `1px solid ${COLORS.panelBorder}`, paddingBottom: "env(safe-area-inset-bottom)" }}>
