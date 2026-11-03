@@ -1364,6 +1364,18 @@ function schedulerTick() {
     changed = true;
   }
 
+  // Am letzten Tag des Monats ab 17:00: Mitarbeiter ans Unterschreiben der Stunden erinnern
+  const ym = v.date.slice(0, 7);
+  if (addDaysISO(v.date, 1).slice(0, 7) !== ym && v.hm >= "17:00" && data.settings.lastSignReminder !== ym) {
+    data.settings.lastSignReminder = ym;
+    changed = true;
+    data.employees.filter((e) => e.active !== false).forEach((e) => {
+      const worked = data.timeEntries.some((t) => t.employeeId === e.id && t.date.startsWith(ym));
+      const signed = data.signatures.some((g) => g.employeeId === e.id && g.ym === ym && g.role === "employee" && g.hash === monthHash(e.id, ym));
+      if (worked && !signed) notifyEmployee(e.id, { title: "✍️ Bitte Stunden unterschreiben", body: "Der Monat ist zu Ende – bitte unter „Zeit → Mein Monat“ deine Stunden kontrollieren und unterschreiben.", tag: "sign-" + ym, url: "/?tab=zeit", alarm: true });
+    });
+  }
+
   const co = data.settings.clockout;
   if (co && co.enabled && v.hm >= co.time && data.settings.lastClockoutCheck !== v.date) {
     data.settings.lastClockoutCheck = v.date;
