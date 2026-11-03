@@ -38,7 +38,7 @@ function emptyData() {
   return {
     admins: [], employees: [], timeEntries: [], todos: [], tasks: [],
     shifts: [], checklistTemplates: [], checklistRuns: [], sessions: [], messages: [], pushSubs: [],
-    reminders: [], absences: [], ideas: [], employeeDocs: [],
+    reminders: [], absences: [], ideas: [], employeeDocs: [], signatures: [],
     settings: { locations: DEFAULT_LOCATIONS.slice(), areas: DEFAULT_AREAS.slice(), lunch: { ...DEFAULT_LUNCH } },
   };
 }
@@ -306,6 +306,8 @@ app.get("/api/state", (req, res) => {
     reminders: data.reminders.filter((r) => canSeeReminder(r, admin, employee)),
     // Ideen & Notizen: Admins sehen alle, Mitarbeiter nur ihre eigenen
     ideas: admin ? data.ideas : data.ideas.filter((i) => i.authorId === employee.id),
+    // Unterschriften der Stundenzettel (Mitarbeiter sieht nur seine eigenen)
+    signatures: data.signatures.filter((g) => admin || g.employeeId === employee.id).map((g) => ({ ...g, valid: g.hash === monthHash(g.employeeId, g.ym) })),
     absences: admin ? data.absences : data.absences
       .filter((a) => a.employeeId === employee.id || a.status === "genehmigt")
       // Bei Kollegen nur "abwesend" anzeigen – Grund (z. B. krank) bleibt privat
@@ -484,6 +486,8 @@ app.delete("/api/employees/:id", requireAdmin, (req, res) => {
   data.absences = data.absences.filter((x) => x.employeeId !== id);
   data.reminders = data.reminders.filter((x) => x.createdBy !== id && x.target !== id);
   data.tasks = data.tasks.map((t) => (t.employeeId === id ? { ...t, employeeId: null } : t));
+  deletePhotos(data.signatures.filter((g) => g.employeeId === id).map((g) => g.image)).catch(() => {});
+  data.signatures = data.signatures.filter((g) => g.employeeId !== id);
   const docs = data.employeeDocs.filter((d) => d.employeeId === id);
   data.employeeDocs = data.employeeDocs.filter((d) => d.employeeId !== id);
   deletePhotos(docs.map((d) => d.fileId)).catch(() => {});
@@ -1154,6 +1158,46 @@ app.delete("/api/docs/:id", requireAdmin, (req, res) => {
   if (!d) return res.status(404).json({ error: "Nicht gefunden." });
   data.employeeDocs = data.employeeDocs.filter((x) => x !== d);
   deletePhotos([d.fileId]).catch(() => {});
+  persist();
+  res.json({ ok: true });
+});
+
+// ---------------------------------------------------------------------------
+// Stundenzettel unterschreiben (Mitarbeiter + Arbeitgeber) – pro Monat
+// Eine Unterschrift gilt nur, solange sich die Zeiten des Monats nicht ändern.
+// ---------------------------------------------------------------------------
+function monthHash(employeeId, ym) {
+  const list = data.timeEntries.filter((e) => e.employeeId === employeeId && e.date.startsWith(ym))
+    .sort((a, b) => a.start - b.start)
+    .map((e) => [e.id, e.date, e.start, e.end, JSON.stringify(e.breaks || []), e.manualBreakMin ?? ""].join("|"));
+  return crypto.createHash("sha256").update(list.join("\n")).digest("hex").slice(0, 32);
+}
+app.post("/api/signatures", requireUser, async (req, res) => {
+  const b = req.body || {};
+  const { admin, employee } = req.auth;
+  const employeeId = employee ? employee.id : b.employeeId;
+  if (!data.employees.some((e) => e.id === employeeId)) return res.status(400).json({ error: "Mitarbeiter fehlt." });
+  if (!/^\d{4}-\d{2}$/.test(String(b.ym || ""))) return res.status(400).json({ error: "Monat ungültig." });
+  if (!data.timeEntries.some((e) => e.employeeId === employeeId && e.date.startsWith(b.ym))) return res.status(400).json({ error: "Für diesen Monat gibt es keine Arbeitszeiten." });
+  if (data.timeEntries.some((e) => e.employeeId === employeeId && e.date.startsWith(b.ym) && e.end === null)) return res.status(400).json({ error: "Bitte zuerst ausstempeln – ein Eintrag läuft noch." });
+  let image;
+  try { image = await savePhoto(b.image); } catch (e) { return res.status(400).json({ error: "Unterschrift fehlt." }); }
+  const role = employee ? "employee" : "admin";
+  const old = data.signatures.filter((g) => g.employeeId === employeeId && g.ym === b.ym && g.role === role);
+  data.signatures = data.signatures.filter((g) => !old.includes(g));
+  deletePhotos(old.map((g) => g.image)).catch(() => {});
+  const sig = { id: uid(), employeeId, ym: b.ym, role, image, at: Date.now(), byName: employee ? employee.name : admin.name, hash: monthHash(employeeId, b.ym) };
+  data.signatures.push(sig);
+  persist();
+  res.json({ ...sig, valid: true });
+  if (employee) pushTo((x) => x.ownerId.startsWith("admin:") && ownerActive(x.ownerId), { title: "✍️ Stunden unterschrieben", body: `${employee.name} · ${b.ym}`, tag: "sig-" + sig.id, url: "/?tab=admin" }).catch(() => {});
+});
+app.delete("/api/signatures/:id", requireUser, (req, res) => {
+  const g = data.signatures.find((x) => x.id === req.params.id);
+  const { employee } = req.auth;
+  if (!g || (employee && (g.employeeId !== employee.id || g.role !== "employee"))) return res.status(404).json({ error: "Nicht gefunden." });
+  data.signatures = data.signatures.filter((x) => x !== g);
+  deletePhotos([g.image]).catch(() => {});
   persist();
   res.json({ ok: true });
 });
