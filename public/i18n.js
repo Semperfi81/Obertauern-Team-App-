@@ -561,6 +561,25 @@ Object.assign(window.I18N_DICT, {
 });
 window.I18N_PATTERNS.push(["„{x}“ löschen?", ["Delete “{x}”?", "¿Eliminar «{x}»?", "Eliminar «{x}»?", "Vymazať „{x}“?", "Obrisati „{x}“?", "Törlöd: „{x}“?"]]);
 
+Object.assign(window.I18N_DICT, {
+"✍️ Am Monatsende unter „Mein Monat“ deine Stunden am Handy unterschreiben.": ["✍️ At the end of the month, sign your hours on your phone under “My month”.", "✍️ A fin de mes, firma tus horas en el móvil en «Mi mes».", "✍️ No fim do mês, assina as tuas horas no telemóvel em «O meu mês».", "✍️ Na konci mesiaca podpíš svoje hodiny v mobile v časti „Môj mesiac“.", "✍️ Na kraju mjeseca potpiši svoje sate na mobitelu pod „Moj mjesec“.", "✍️ A hónap végén írd alá az óráidat a telefonon a „Saját hónap“ résznél."],
+"✍️ In der Monatsansicht unterschreibst du als Arbeitgeber und druckst den Stundenzettel (🖨) – mit beiden Unterschriften.": ["✍️ In the month view you sign as employer and print the timesheet (🖨) – with both signatures.", "✍️ En la vista mensual firmas como empleador e imprimes la hoja de horas (🖨) – con ambas firmas.", "✍️ Na vista mensal assinas como empregador e imprimes a folha de horas (🖨) – com as duas assinaturas.", "✍️ V mesačnom prehľade podpíšeš ako zamestnávateľ a vytlačíš výkaz (🖨) – s oboma podpismi.", "✍️ U mjesečnom prikazu potpisuješ kao poslodavac i ispisuješ evidenciju sati (🖨) – s oba potpisa.", "✍️ A havi nézetben munkáltatóként aláírsz és kinyomtatod a jelenléti ívet (🖨) – mindkét aláírással."],
+"Mitarbeiter": ["Employee", "Empleado", "Colaborador", "Zamestnanec", "Zaposlenik", "Munkatárs"],
+"Arbeitgeber": ["Employer", "Empleador", "Empregador", "Zamestnávateľ", "Poslodavac", "Munkáltató"],
+"✍️ Unterschreiben": ["✍️ Sign", "✍️ Firmar", "✍️ Assinar", "✍️ Podpísať", "✍️ Potpiši", "✍️ Aláírás"],
+"✍️ Neu unterschreiben": ["✍️ Sign again", "✍️ Firmar de nuevo", "✍️ Assinar de novo", "✍️ Podpísať znova", "✍️ Potpiši ponovno", "✍️ Újra aláír"],
+"🖨 Stundenzettel": ["🖨 Timesheet", "🖨 Hoja de horas", "🖨 Folha de horas", "🖨 Výkaz hodín", "🖨 Evidencija sati", "🖨 Jelenléti ív"],
+"⚠ Zeiten wurden nach der Unterschrift geändert – bitte neu unterschreiben.": ["⚠ Times were changed after signing – please sign again.", "⚠ Las horas cambiaron después de firmar – firma de nuevo.", "⚠ As horas foram alteradas depois de assinar – assina de novo.", "⚠ Časy sa po podpise zmenili – podpíš znova.", "⚠ Vremena su promijenjena nakon potpisa – potpiši ponovno.", "⚠ Az aláírás után változtak az idők – írd alá újra."],
+"✍️ Unterschrift Arbeitgeber": ["✍️ Employer signature", "✍️ Firma del empleador", "✍️ Assinatura do empregador", "✍️ Podpis zamestnávateľa", "✍️ Potpis poslodavca", "✍️ Munkáltató aláírása"],
+"✍️ Stunden unterschreiben": ["✍️ Sign hours", "✍️ Firmar horas", "✍️ Assinar horas", "✍️ Podpísať hodiny", "✍️ Potpiši sate", "✍️ Órák aláírása"],
+"✍️ Mit dem Finger im weißen Feld unterschreiben.": ["✍️ Sign with your finger in the white box.", "✍️ Firma con el dedo en el recuadro blanco.", "✍️ Assina com o dedo na caixa branca.", "✍️ Podpíš sa prstom v bielom poli.", "✍️ Potpiši se prstom u bijelom polju.", "✍️ Írd alá ujjal a fehér mezőben."],
+"✓ Unterschreiben": ["✓ Sign", "✓ Firmar", "✓ Assinar", "✓ Podpísať", "✓ Potpiši", "✓ Aláírás"],
+"Für diesen Monat gibt es keine Arbeitszeiten.": ["There are no working hours for this month.", "No hay horas de trabajo en este mes.", "Não há horas de trabalho neste mês.", "Za tento mesiac nie sú žiadne pracovné časy.", "Za ovaj mjesec nema radnih sati.", "Ebben a hónapban nincs munkaidő."],
+"Bitte zuerst ausstempeln – ein Eintrag läuft noch.": ["Please clock out first – an entry is still running.", "Primero ficha la salida – hay un registro en curso.", "Regista primeiro a saída – há um registo em curso.", "Najprv sa odhlás – záznam ešte beží.", "Prvo se odjavi – unos još traje.", "Előbb jelentkezz ki – egy bejegyzés még fut."],
+"Unterschrift fehlt.": ["Signature missing.", "Falta la firma.", "Falta a assinatura.", "Chýba podpis.", "Nedostaje potpis.", "Hiányzik az aláírás."],
+"Bitte Pop-ups für diese Seite erlauben.": ["Please allow pop-ups for this site.", "Permite las ventanas emergentes para esta página.", "Permite pop-ups para esta página.", "Povoľ vyskakovacie okná pre túto stránku.", "Dopusti skočne prozore za ovu stranicu.", "Engedélyezd a felugró ablakokat ennél az oldalnál."]
+});
+
 // ---- Übersetzungs-Engine: übersetzt die deutsche Oberfläche im Browser ----
 (function () {
   var KEY = "team-app-lang";

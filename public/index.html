@@ -275,7 +275,8 @@ const HELP = [
    "■ Ende drücken, wenn du fertig bist.",
    "Die Mittagspause wird automatisch abgezogen.",
    "Unten siehst du deine Stunden im aktuellen Monat.",
-   "Vergessen auszustempeln? Bitte einem Admin Bescheid geben."
+   "Vergessen auszustempeln? Bitte einem Admin Bescheid geben.",
+   "✍️ Am Monatsende unter „Mein Monat“ deine Stunden am Handy unterschreiben."
   ],
   "admin": [
    "Als Admin kannst du für jeden Mitarbeiter stempeln. Deine eigene Zeit erfasst du unter „🔒 Meine Admin-Zeit“."
@@ -340,6 +341,7 @@ const HELP = [
   "admin": [
    "📊 Stunden: Arbeitszeiten pro Tag, Woche oder Monat – als CSV für Excel herunterladen.",
    "✎ Einträge: Zeiten korrigieren oder nachtragen.",
+   "✍️ In der Monatsansicht unterschreibst du als Arbeitgeber und druckst den Stundenzettel (🖨) – mit beiden Unterschriften.",
    "👥 Team: Mitarbeiter anlegen, PIN anzeigen oder zurücksetzen, auf inaktiv setzen. Mit 📁 legst du Dokumente ab (z. B. Arbeitsvertrag) – nur für Admins sichtbar.",
    "⚙️ Einstellungen: Standorte, Bereiche, Mittagspause, Dienstzeiten und Erinnerung „Noch eingestempelt?“."
   ]
@@ -791,7 +793,7 @@ function AdminManageModal({ token, onClose }) {
 // =====================================================================
 // ZEIT
 // =====================================================================
-function ZeitTab({ S, me, isAdmin, empAct, activeEmployees }) {
+function ZeitTab({ S, me, isAdmin, empAct, activeEmployees, act }) {
   const [, setTick] = useState(0);
   const [view, setView] = useState("tag");
   const [monday, setMonday] = useState(mondayOf(todayISO()));
@@ -836,7 +838,7 @@ function ZeitTab({ S, me, isAdmin, empAct, activeEmployees }) {
       {view === "tag" ? (
         <div className="grid sm:grid-cols-2 gap-3">
           {sorted.map((emp) => <ClockCard key={emp.id} emp={emp} S={S} isMe={!isAdmin} empAct={empAct} today={today} />)}
-          {!isAdmin && me && <MyMonthPanel S={S} me={me} />}
+          {!isAdmin && me && <MyMonthPanel S={S} me={me} act={act} canSign />}
         </div>
       ) : (
         <div className="space-y-3">
@@ -876,20 +878,160 @@ function ZeitTab({ S, me, isAdmin, empAct, activeEmployees }) {
   );
 }
 
-function MyMonthPanel({ S, me }) {
-  const ym = todayISO().slice(0, 7);
+// =====================================================================
+// STUNDENZETTEL: Unterschrift am Handy + Druck / PDF
+// =====================================================================
+const COMPANY_NAME = "Obertauern Sport GmbH · Sport Gefäll";
+function sigFor(S, empId, ym, role) { return (S.signatures || []).find((g) => g.employeeId === empId && g.ym === ym && g.role === role); }
+
+function SignaturePad({ title, subtitle, onSave, onClose }) {
+  const ref = useRef(null);
+  const drawing = useRef(false);
+  const [empty, setEmpty] = useState(true);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    const c = ref.current, ratio = window.devicePixelRatio || 1;
+    const w = c.clientWidth, h = c.clientHeight;
+    c.width = w * ratio; c.height = h * ratio;
+    const ctx = c.getContext("2d"); ctx.scale(ratio, ratio);
+    ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, w, h);
+    ctx.lineWidth = 2.4; ctx.lineCap = "round"; ctx.lineJoin = "round"; ctx.strokeStyle = "#0B1F4D";
+  }, []);
+  const pos = (e) => { const r = ref.current.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; };
+  const down = (e) => { e.preventDefault(); ref.current.setPointerCapture(e.pointerId); drawing.current = true; const ctx = ref.current.getContext("2d"); const [x, y] = pos(e); ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + 0.1, y + 0.1); ctx.stroke(); setEmpty(false); };
+  const move = (e) => { if (!drawing.current) return; e.preventDefault(); const ctx = ref.current.getContext("2d"); const [x, y] = pos(e); ctx.lineTo(x, y); ctx.stroke(); };
+  const up = () => { drawing.current = false; };
+  function clear() { const c = ref.current, ctx = c.getContext("2d"); ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, c.width, c.height); ctx.restore(); setEmpty(true); }
+  async function save() {
+    setBusy(true);
+    // auf vernünftige Größe verkleinern (spart Speicher)
+    const src = ref.current, out = document.createElement("canvas");
+    out.width = 600; out.height = Math.round(600 * src.height / src.width);
+    const o = out.getContext("2d"); o.fillStyle = "#fff"; o.fillRect(0, 0, out.width, out.height); o.drawImage(src, 0, 0, out.width, out.height);
+    try { await onSave(out.toDataURL("image/png")); } finally { setBusy(false); }
+  }
+  return (
+    <Modal onClose={onClose} wide>
+      <h3 className="text-sm font-medium mb-0.5">{title}</h3>
+      {subtitle && <p className="text-xs mb-3" style={{ color: COLORS.textDim }}>{subtitle}</p>}
+      <div className="rounded-lg overflow-hidden mb-1" style={{ border: `2px dashed ${COLORS.panelBorder}` }}>
+        <canvas ref={ref} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up} onPointerLeave={up}
+          style={{ width: "100%", height: 190, display: "block", touchAction: "none", background: "#fff", cursor: "crosshair" }} />
+      </div>
+      <p className="text-[11px] mb-3" style={{ color: COLORS.textDim }}>✍️ Mit dem Finger im weißen Feld unterschreiben.</p>
+      <div className="flex gap-2">
+        <Btn onClick={save} disabled={empty || busy} className="flex-1">{busy ? "…" : "✓ Unterschreiben"}</Btn>
+        <Btn kind="ghost" onClick={clear}>Löschen</Btn>
+        <Btn kind="ghost" onClick={onClose}>Abbrechen</Btn>
+      </div>
+    </Modal>
+  );
+}
+
+async function photoAsDataUrl(id) {
+  if (!id) return null;
+  const r = await fetch("/api/photos/" + id, { headers: { Authorization: "Bearer " + store.get(TOKEN_KEY) } });
+  if (!r.ok) return null;
+  const b = await r.blob();
+  return await new Promise((res) => { const f = new FileReader(); f.onload = () => res(f.result); f.onerror = () => res(null); f.readAsDataURL(b); });
+}
+const escHtml = (t) => String(t == null ? "" : t).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+// Druckbarer Stundenzettel (Drucken oder „Als PDF speichern“) – bewusst auf Deutsch
+async function printTimesheet(S, emp, ym) {
+  const win = window.open("", "_blank");
+  if (!win) { alert("Bitte Pop-ups für diese Seite erlauben."); return; }
+  win.document.write("<p style='font-family:sans-serif'>Stundenzettel wird erstellt …</p>");
+  const sE = sigFor(S, emp.id, ym, "employee"), sA = sigFor(S, emp.id, ym, "admin");
+  const [imgE, imgA] = await Promise.all([photoAsDataUrl(sE && sE.image), photoAsDataUrl(sA && sA.image)]);
+  const days = monthDays(ym);
+  const st = periodStats(S, emp, days);
+  const wd = (d) => parseISO(d).toLocaleDateString("de-AT", { weekday: "short" });
+  const rows = days.map((d) => {
+    const list = S.timeEntries.filter((e) => e.employeeId === emp.id && e.date === d).sort((a, b) => a.start - b.start);
+    const x = dayStats(S, emp.id, d);
+    const abs = (S.absences || []).find((a) => a.employeeId === emp.id && a.status === "genehmigt" && absCovers(a, d));
+    const we = [0, 6].includes(parseISO(d).getDay());
+    const times = list.map((e) => fmtClock(e.start) + "–" + (e.end ? fmtClock(e.end) : "läuft")).join(", ");
+    return `<tr class="${we ? "we" : ""}"><td>${d.slice(8)}.${d.slice(5, 7)}.</td><td>${wd(d)}</td><td>${escHtml(times) || (abs ? escHtml(ABS[abs.type].label) : "")}</td>`
+      + `<td class="r">${list.length ? Math.round(x.brk / 60000) : ""}</td><td class="r">${list.length && x.lunch ? Math.round(x.lunch / 60000) : ""}</td>`
+      + `<td class="r b">${list.length ? fmtHours(x.net) : ""}</td><td>${escHtml([...new Set(list.map((e) => e.location).filter(Boolean))].join(", "))}</td></tr>`;
+  }).join("");
+  const sigBox = (label, g, img, fallbackName) => `<div class="sig"><div class="sigimg">${img ? `<img src="${img}">` : ""}</div>`
+    + `<div class="line"></div><div class="lbl">${label}: ${escHtml(g ? g.byName : fallbackName || "")}</div>`
+    + `<div class="meta">${g ? "Digital unterschrieben am " + new Date(g.at).toLocaleString("de-AT") + (g.valid ? "" : " – ⚠ Zeiten wurden danach geändert") : "Datum / Unterschrift"}</div></div>`;
+  const html = `<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Stundenzettel ${escHtml(emp.name)} ${ym}</title>
+<style>
+ body{font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#111;margin:24px;font-size:12px}
+ h1{font-size:18px;margin:0}.sub{color:#555;margin:2px 0 14px}
+ table{width:100%;border-collapse:collapse}th,td{border:1px solid #bbb;padding:3px 5px;text-align:left}th{background:#eee;font-size:11px}
+ td.r,th.r{text-align:right}td.b{font-weight:600}tr.we td{background:#f6f6f6}
+ .sum{margin:10px 0 0;display:flex;gap:18px;flex-wrap:wrap;font-size:12px}.sum b{font-size:14px}
+ .sigs{display:flex;gap:28px;margin-top:28px}.sig{flex:1}.sigimg{height:70px;display:flex;align-items:flex-end}.sigimg img{max-height:70px;max-width:100%}
+ .line{border-top:1px solid #333;margin-top:2px}.lbl{font-weight:600;margin-top:3px}.meta{color:#666;font-size:10px}
+ .note{color:#666;font-size:10px;margin-top:14px}.bar{margin-bottom:14px}.bar button{font-size:14px;padding:8px 14px;margin-right:8px}
+ @media print{.bar{display:none}body{margin:10mm}}
+</style></head><body>
+<div class="bar"><button onclick="window.print()">🖨 Drucken / Als PDF speichern</button><button onclick="window.close()">Schließen</button></div>
+<h1>Stundenzettel – ${escHtml(fmtMonth(ym))}</h1>
+<div class="sub">${escHtml(COMPANY_NAME)} · Mitarbeiter/in: <b>${escHtml(emp.name)}</b></div>
+<table><thead><tr><th>Datum</th><th>Tag</th><th>Arbeitszeit</th><th class="r">Pause (Min)</th><th class="r">Mittag (Min)</th><th class="r">Netto (Std)</th><th>Standort</th></tr></thead><tbody>${rows}</tbody></table>
+<div class="sum"><span>Arbeitstage: <b>${st.days}</b></span><span>Netto gesamt: <b>${fmtHours(st.net)} Std</b></span>${st.urlaub ? `<span>Urlaubstage: <b>${st.urlaub}</b></span>` : ""}${st.krank ? `<span>Krankentage: <b>${st.krank}</b></span>` : ""}</div>
+<div class="sigs">${sigBox("Mitarbeiter/in", sE, imgE, emp.name)}${sigBox("Arbeitgeber", sA, imgA, "")}</div>
+<div class="note">Stunden als Dezimalzahl (7,50 = 7 h 30 min). Netto = Arbeitszeit abzüglich Pausen und automatischer Mittagspause. Erstellt am ${new Date().toLocaleString("de-AT")}.</div>
+</body></html>`;
+  win.document.open(); win.document.write(html); win.document.close();
+}
+
+// Unterschrift-Status + Aktionen für einen Mitarbeiter-Monat
+function SignRow({ S, emp, ym, asAdmin, act, compact }) {
+  const [pad, setPad] = useState(false);
+  const sE = sigFor(S, emp.id, ym, "employee"), sA = sigFor(S, emp.id, ym, "admin");
+  const hasEntries = S.timeEntries.some((e) => e.employeeId === emp.id && e.date.startsWith(ym));
+  const mine = asAdmin ? sA : sE;
+  const badge = (g, label) => {
+    const ok = g && g.valid;
+    const col = !g ? COLORS.textDim : ok ? COLORS.accent2 : COLORS.warn;
+    return <span className="text-[11px] px-1.5 py-0.5 rounded-full whitespace-nowrap" style={{ background: col + "22", color: col }} title={g ? new Date(g.at).toLocaleString(window.I18N.locale) : ""}>{!g ? "○" : ok ? "✓" : "⚠"} <span>{label}</span></span>;
+  };
+  async function save(image) {
+    try { await act("/signatures", { method: "POST", body: { ym, image, employeeId: emp.id } }); setPad(false); } catch (e) {}
+  }
+  return (
+    <div className={`flex items-center gap-1.5 flex-wrap ${compact ? "" : "mt-3"}`}>
+      {badge(sE, "Mitarbeiter")}{badge(sA, "Arbeitgeber")}
+      {hasEntries && <button onClick={() => setPad(true)} className="text-[11px] px-2 py-1 rounded-md font-medium" style={{ background: COLORS.accent, color: "#1A1A1A" }}>{mine && mine.valid ? "✍️ Neu unterschreiben" : "✍️ Unterschreiben"}</button>}
+      {hasEntries && <button onClick={() => printTimesheet(S, emp, ym)} className="text-[11px] px-2 py-1 rounded-md" style={{ border: `1px solid ${COLORS.panelBorder}`, color: COLORS.text }}>🖨 Stundenzettel</button>}
+      {((sE && !sE.valid) || (sA && !sA.valid)) && <span className="text-[10px] w-full" style={{ color: COLORS.warn }}>⚠ Zeiten wurden nach der Unterschrift geändert – bitte neu unterschreiben.</span>}
+      {pad && <SignaturePad title={asAdmin ? "✍️ Unterschrift Arbeitgeber" : "✍️ Stunden unterschreiben"}
+        subtitle={`${emp.name} · ${fmtMonth(ym)} · ${fmtHours(periodStats(S, emp, monthDays(ym)).net)} Std netto`}
+        onSave={save} onClose={() => setPad(false)} />}
+    </div>
+  );
+}
+
+function MyMonthPanel({ S, me, act, canSign }) {
+  const [ym, setYm] = useState(todayISO().slice(0, 7));
+  const shiftYm = (n) => { const [y, m] = ym.split("-").map(Number); const d = new Date(y, m - 1 + n, 1); setYm(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`); };
   const entries = S.timeEntries.filter((e) => e.employeeId === me && e.date.startsWith(ym));
   const st = rangeStats(S, me, entries.map((e) => e.date));
   const net = st.net, days = st.days;
   const planned = S.shifts.filter((s) => s.employeeId === me && s.date.startsWith(ym)).reduce((a, s) => a + shiftMs(s), 0);
   return (
     <Panel>
-      <h3 className="text-sm font-medium mb-2">Mein {fmtMonth(ym)}</h3>
+      <div className="flex items-center justify-between mb-2">
+        <h3 className="text-sm font-medium">Mein {fmtMonth(ym)}</h3>
+        {canSign && <div className="flex gap-1">
+          <button onClick={() => shiftYm(-1)} className="w-7 h-7 rounded-md" style={{ border: `1px solid ${COLORS.panelBorder}`, color: COLORS.textDim }}>‹</button>
+          <button onClick={() => shiftYm(1)} disabled={ym >= todayISO().slice(0, 7)} className="w-7 h-7 rounded-md disabled:opacity-30" style={{ border: `1px solid ${COLORS.panelBorder}`, color: COLORS.textDim }}>›</button>
+        </div>}
+      </div>
       <div className="grid grid-cols-3 gap-2 text-center">
         <div className="rounded-lg py-2" style={{ background: COLORS.bg }}><div className="text-lg font-semibold tabular-nums">{fmtHours(net)}</div><div className="text-[11px]" style={{ color: COLORS.textDim }}>Std. netto</div></div>
         <div className="rounded-lg py-2" style={{ background: COLORS.bg }}><div className="text-lg font-semibold tabular-nums">{days}</div><div className="text-[11px]" style={{ color: COLORS.textDim }}>Arbeitstage</div></div>
         <div className="rounded-lg py-2" style={{ background: COLORS.bg }}><div className="text-lg font-semibold tabular-nums">{planned ? fmtHours(planned) : "–"}</div><div className="text-[11px]" style={{ color: COLORS.textDim }}>Std. geplant</div></div>
       </div>
+      {canSign && S.me && <SignRow S={S} emp={S.me} ym={ym} act={act} />}
     </Panel>
   );
 }
@@ -2198,7 +2340,7 @@ function periodStats(S, emp, dates) {
 
 const isAdminId = (id) => String(id).startsWith("admin:");
 
-function MonthView({ S, mode = "staff" }) {
+function MonthView({ S, mode = "staff", act }) {
   const [ym, setYm] = useState(todayISO().slice(0, 7));
   const [kind, setKindState] = useState(() => store.get("team-app-period") || "monat");
   const setKind = (k) => { setKindState(k); store.set("team-app-period", k); };
@@ -2223,14 +2365,14 @@ function MonthView({ S, mode = "staff" }) {
     downloadCSV(`${prefix}_${periodKey}_zusammenfassung.csv`, out);
   }
   function exportDetail() {
-    const out = [[admins ? "Admin" : "Mitarbeiter", "Datum", "Wochentag", "Beginn", "Ende", "Pause gestempelt (Min)", ...(admins ? [] : ["Mittagspause automatisch (Min)"]), "Netto (Std)", "Standort", "Notiz", "Korrigiert von"]];
+    const out = [[admins ? "Admin" : "Mitarbeiter", "Datum", "Wochentag", "Beginn", "Ende", "Pause gestempelt (Min)", ...(admins ? [] : ["Mittagspause automatisch (Min)"]), "Netto (Std)", "Standort", "Notiz"]];
     const seen = new Set();
     S.timeEntries.filter((e) => inP.has(e.date) && isAdminId(e.employeeId) === admins).sort((a, b) => personName(S, a.employeeId).localeCompare(personName(S, b.employeeId)) || a.date.localeCompare(b.date) || a.start - b.start).forEach((e) => {
       // Mittagspause einmal pro Tag (beim ersten Eintrag des Tages) abziehen
       const key = e.employeeId + "|" + e.date;
       let lunch = 0;
       if (!seen.has(key)) { seen.add(key); lunch = dayStats(S, e.employeeId, e.date).lunch; }
-      out.push([personName(S, e.employeeId), parseISO(e.date).toLocaleDateString("de-AT"), fmtDateShort(e.date).split(",")[0], fmtClock(e.start), e.end ? fmtClock(e.end) : "läuft", Math.round(entryBreakMs(e) / 60000), ...(admins ? [] : [lunch ? Math.round(lunch / 60000) : ""]), fmtHours(Math.max(0, entryNetMs(e) - lunch)), e.location || "", e.note || "", e.editedBy || ""]);
+      out.push([personName(S, e.employeeId), parseISO(e.date).toLocaleDateString("de-AT"), fmtDateShort(e.date).split(",")[0], fmtClock(e.start), e.end ? fmtClock(e.end) : "läuft", Math.round(entryBreakMs(e) / 60000), ...(admins ? [] : [lunch ? Math.round(lunch / 60000) : ""]), fmtHours(Math.max(0, entryNetMs(e) - lunch)), e.location || "", e.note || ""]);
     });
     downloadCSV(`${prefix}_${periodKey}_details.csv`, out);
   }
@@ -2277,6 +2419,9 @@ function MonthView({ S, mode = "staff" }) {
                   </tr>
                   {r.warnings.length > 0 && (
                     <tr><td colSpan={admins ? 6 : 7} className="px-3 pb-2 text-[11px]" style={{ color: COLORS.warn }}>{r.warnings.join(" · ")}</td></tr>
+                  )}
+                  {!admins && kind === "monat" && r.days > 0 && act && (
+                    <tr><td colSpan={7} className="px-3 pb-2.5"><SignRow S={S} emp={r.e} ym={ym} asAdmin act={act} compact /></td></tr>
                   )}
                 </React.Fragment>
               );
