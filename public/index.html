@@ -997,10 +997,17 @@ function SignRow({ S, emp, ym, asAdmin, act, compact }) {
   async function save(image) {
     try { await act("/signatures", { method: "POST", body: { ym, image, employeeId: emp.id } }); setPad(false); } catch (e) {}
   }
+  async function remind() {
+    try {
+      const r = await act("/signatures/remind", { method: "POST", body: { employeeId: emp.id } });
+      alert(r.sent ? `Erinnerung an ${emp.name} gesendet ✓` : `${emp.name} hat keine Benachrichtigungen aktiviert – die Nachricht konnte nicht zugestellt werden.`);
+    } catch (e) {}
+  }
   return (
     <div className={`flex items-center gap-1.5 flex-wrap ${compact ? "" : "mt-3"}`}>
       {badge(sE, "Mitarbeiter")}{badge(sA, "Arbeitgeber")}
       {hasEntries && <button onClick={() => setPad(true)} className="text-[11px] px-2 py-1 rounded-md font-medium" style={{ background: COLORS.accent, color: "#1A1A1A" }}>{mine && mine.valid ? "✍️ Neu unterschreiben" : "✍️ Unterschreiben"}</button>}
+      {asAdmin && !(sE && sE.valid) && <button onClick={remind} className="text-[11px] px-2 py-1 rounded-md" style={{ border: `1px solid ${COLORS.panelBorder}`, color: COLORS.text }}>🔔 Erinnern</button>}
       {hasEntries && <button onClick={() => printTimesheet(S, emp, ym)} className="text-[11px] px-2 py-1 rounded-md" style={{ border: `1px solid ${COLORS.panelBorder}`, color: COLORS.text }}>🖨 Stundenzettel</button>}
       {((sE && !sE.valid) || (sA && !sA.valid)) && <span className="text-[10px] w-full" style={{ color: COLORS.warn }}>⚠ Zeiten wurden nach der Unterschrift geändert – bitte neu unterschreiben.</span>}
       {pad && <SignaturePad title={asAdmin ? "✍️ Unterschrift Arbeitgeber" : "✍️ Stunden unterschreiben"}

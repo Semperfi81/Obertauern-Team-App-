@@ -580,6 +580,14 @@ Object.assign(window.I18N_DICT, {
 "Bitte Pop-ups für diese Seite erlauben.": ["Please allow pop-ups for this site.", "Permite las ventanas emergentes para esta página.", "Permite pop-ups para esta página.", "Povoľ vyskakovacie okná pre túto stránku.", "Dopusti skočne prozore za ovu stranicu.", "Engedélyezd a felugró ablakokat ennél az oldalnál."]
 });
 
+Object.assign(window.I18N_DICT, {
+"🔔 Erinnern": ["🔔 Remind", "🔔 Recordar", "🔔 Lembrar", "🔔 Pripomenúť", "🔔 Podsjeti", "🔔 Emlékeztet"]
+});
+window.I18N_PATTERNS.push(
+["Erinnerung an {x} gesendet ✓", ["Reminder sent to {x} ✓", "Recordatorio enviado a {x} ✓", "Lembrete enviado a {x} ✓", "Pripomienka odoslaná: {x} ✓", "Podsjetnik poslan: {x} ✓", "Emlékeztető elküldve: {x} ✓"]],
+["{x} hat keine Benachrichtigungen aktiviert – die Nachricht konnte nicht zugestellt werden.", ["{x} has not enabled notifications – the message could not be delivered.", "{x} no tiene las notificaciones activadas – no se pudo entregar el mensaje.", "{x} não tem as notificações ativas – a mensagem não foi entregue.", "{x} nemá zapnuté upozornenia – správu sa nepodarilo doručiť.", "{x} nema uključene obavijesti – poruka nije dostavljena.", "{x} nem kapcsolta be az értesítéseket – az üzenetet nem lehetett kézbesíteni."]]
+);
+
 // ---- Übersetzungs-Engine: übersetzt die deutsche Oberfläche im Browser ----
 (function () {
   var KEY = "team-app-lang";
