@@ -1192,6 +1192,13 @@ app.post("/api/signatures", requireUser, async (req, res) => {
   res.json({ ...sig, valid: true });
   if (employee) pushTo((x) => x.ownerId.startsWith("admin:") && ownerActive(x.ownerId), { title: "✍️ Stunden unterschrieben", body: `${employee.name} · ${b.ym}`, tag: "sig-" + sig.id, url: "/?tab=admin" }).catch(() => {});
 });
+// Admin schickt einem Mitarbeiter die Erinnerung „Bitte Stunden unterschreiben“ (auch zum Testen)
+app.post("/api/signatures/remind", requireAdmin, async (req, res) => {
+  const emp = data.employees.find((e) => e.id === (req.body || {}).employeeId);
+  if (!emp) return res.status(400).json({ error: "Mitarbeiter fehlt." });
+  const sent = await pushTo((x) => x.ownerId === emp.id && ownerActive(x.ownerId), { title: "✍️ Bitte Stunden unterschreiben", body: "Der Monat ist zu Ende – bitte unter „Zeit → Mein Monat“ deine Stunden kontrollieren und unterschreiben.", tag: "sign-manual", url: "/?tab=zeit", alarm: true }).catch(() => 0);
+  res.json({ sent });
+});
 app.delete("/api/signatures/:id", requireUser, (req, res) => {
   const g = data.signatures.find((x) => x.id === req.params.id);
   const { employee } = req.auth;
