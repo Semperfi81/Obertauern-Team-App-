@@ -6,7 +6,7 @@ let webpush = null;
 try { webpush = require("web-push"); } catch (e) { console.warn("web-push nicht installiert – keine Push-Benachrichtigungen."); }
 
 const app = express();
-app.use(express.json({ limit: "12mb" })); // Fotos kommen als Base64
+app.use(express.json({ limit: "15mb" })); // Fotos kommen als Base64
 
 const MAX_ADMINS = 5;
 const TZ = "Europe/Vienna";
@@ -38,7 +38,7 @@ function emptyData() {
   return {
     admins: [], employees: [], timeEntries: [], todos: [], tasks: [],
     shifts: [], checklistTemplates: [], checklistRuns: [], sessions: [], messages: [], pushSubs: [],
-    reminders: [], absences: [], ideas: [],
+    reminders: [], absences: [], ideas: [], employeeDocs: [],
     settings: { locations: DEFAULT_LOCATIONS.slice(), areas: DEFAULT_AREAS.slice(), lunch: { ...DEFAULT_LUNCH } },
   };
 }
@@ -290,6 +290,8 @@ app.get("/api/state", (req, res) => {
     myAuthorId: employee ? employee.id : "admin:" + admin.id,
     // Admins (für Admin-Zeiterfassung) – nur Admins bekommen diese Liste
     admins: admin ? data.admins.map((a) => ({ id: "admin:" + a.id, name: a.name })) : undefined,
+    // Anzahl Personal-Dokumente je Mitarbeiter – nur für Admins
+    docCounts: admin ? data.employeeDocs.reduce((m, d) => ((m[d.employeeId] = (m[d.employeeId] || 0) + 1), m), {}) : undefined,
     employees: data.employees.map(publicEmployee),
     // Arbeitszeiten: Admin sieht alle, Mitarbeiter nur die eigenen
     // Admin: alle Zeiten (inkl. Admin-Zeiten aller Admins). Mitarbeiter: nur die eigenen
@@ -482,6 +484,9 @@ app.delete("/api/employees/:id", requireAdmin, (req, res) => {
   data.absences = data.absences.filter((x) => x.employeeId !== id);
   data.reminders = data.reminders.filter((x) => x.createdBy !== id && x.target !== id);
   data.tasks = data.tasks.map((t) => (t.employeeId === id ? { ...t, employeeId: null } : t));
+  const docs = data.employeeDocs.filter((d) => d.employeeId === id);
+  data.employeeDocs = data.employeeDocs.filter((d) => d.employeeId !== id);
+  deletePhotos(docs.map((d) => d.fileId)).catch(() => {});
   persist();
   res.json({ ok: true });
 });
@@ -1087,6 +1092,8 @@ async function deletePhotos(ids) {
 
 // Foto abrufen (nur angemeldet; IDs sind zufällig und nicht erratbar)
 app.get("/api/photos/:id", requireUser, async (req, res) => {
+  // Mitarbeiter-Dokumente nie über diesen Weg ausliefern
+  if (data.employeeDocs.some((d) => d.fileId === req.params.id)) return res.status(404).json({ error: "Foto nicht gefunden." });
   try {
     const p = await loadPhoto(req.params.id);
     if (!p) return res.status(404).json({ error: "Foto nicht gefunden." });
@@ -1094,6 +1101,61 @@ app.get("/api/photos/:id", requireUser, async (req, res) => {
     res.setHeader("Cache-Control", "private, max-age=31536000, immutable");
     res.end(p.buf);
   } catch (e) { res.status(500).json({ error: "Foto konnte nicht geladen werden." }); }
+});
+
+// ---------------------------------------------------------------------------
+// Personal-Dokumente je Mitarbeiter (Arbeitsvertrag, Anmeldung …) – NUR Admins
+// ---------------------------------------------------------------------------
+const MAX_DOC_BYTES = 10 * 1024 * 1024;
+const DOC_MIMES = {
+  "application/pdf": "pdf", "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/heic": "heic",
+  "application/msword": "doc", "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
+  "application/vnd.ms-excel": "xls", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",
+  "text/plain": "txt",
+};
+const DOC_CATS = ["Arbeitsvertrag", "Anmeldung", "Ausweis", "Zeugnis", "Krankmeldung", "Sonstiges"];
+function publicDoc(d) { const { fileId, ...rest } = d; return rest; }
+app.get("/api/employees/:id/docs", requireAdmin, (req, res) => {
+  res.json({ docs: data.employeeDocs.filter((d) => d.employeeId === req.params.id).sort((a, b) => b.at - a.at).map(publicDoc), categories: DOC_CATS });
+});
+app.post("/api/employees/:id/docs", requireAdmin, async (req, res) => {
+  const emp = data.employees.find((e) => e.id === req.params.id);
+  if (!emp) return res.status(404).json({ error: "Nicht gefunden." });
+  const b = req.body || {};
+  const m = /^data:([a-zA-Z0-9.+\/-]+);base64,([A-Za-z0-9+/=]+)$/.exec(String(b.dataUrl || ""));
+  if (!m || !DOC_MIMES[m[1]]) return res.status(400).json({ error: "Dateityp nicht erlaubt (PDF, Foto, Word, Excel)." });
+  const buf = Buffer.from(m[2], "base64");
+  if (!buf.length || buf.length > MAX_DOC_BYTES) return res.status(400).json({ error: "Datei zu groß (max. 10 MB)." });
+  const fileId = photoId();
+  try {
+    if (pgPool) await pgPool.query("INSERT INTO photos (id, mime, data) VALUES ($1, $2, $3)", [fileId, m[1], buf]);
+    else { fs.mkdirSync(PHOTO_DIR, { recursive: true }); fs.writeFileSync(path.join(PHOTO_DIR, fileId), JSON.stringify({ mime: m[1], data: buf.toString("base64") })); }
+  } catch (e) { return res.status(500).json({ error: "Datei konnte nicht gespeichert werden." }); }
+  const name = str(b.name, 120) || "Dokument." + DOC_MIMES[m[1]];
+  const doc = { id: uid(), employeeId: emp.id, fileId, name, mime: m[1], size: buf.length, category: DOC_CATS.includes(b.category) ? b.category : "Sonstiges", note: str(b.note, 300), at: Date.now(), byName: req.admin.name };
+  data.employeeDocs.push(doc);
+  persist();
+  res.json(publicDoc(doc));
+});
+app.get("/api/docs/:id/file", requireAdmin, async (req, res) => {
+  const d = data.employeeDocs.find((x) => x.id === req.params.id);
+  if (!d) return res.status(404).json({ error: "Nicht gefunden." });
+  try {
+    const p = await loadPhoto(d.fileId);
+    if (!p) return res.status(404).json({ error: "Datei nicht gefunden." });
+    res.setHeader("Content-Type", p.mime);
+    res.setHeader("Content-Disposition", `${req.query.download ? "attachment" : "inline"}; filename*=UTF-8''${encodeURIComponent(d.name)}`);
+    res.setHeader("Cache-Control", "private, no-store");
+    res.end(p.buf);
+  } catch (e) { res.status(500).json({ error: "Datei konnte nicht geladen werden." }); }
+});
+app.delete("/api/docs/:id", requireAdmin, (req, res) => {
+  const d = data.employeeDocs.find((x) => x.id === req.params.id);
+  if (!d) return res.status(404).json({ error: "Nicht gefunden." });
+  data.employeeDocs = data.employeeDocs.filter((x) => x !== d);
+  deletePhotos([d.fileId]).catch(() => {});
+  persist();
+  res.json({ ok: true });
 });
 
 // Foto zu einer Aufgabe hinzufügen / entfernen
