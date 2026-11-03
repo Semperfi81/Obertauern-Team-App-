@@ -340,7 +340,7 @@ const HELP = [
   "admin": [
    "📊 Stunden: Arbeitszeiten pro Tag, Woche oder Monat – als CSV für Excel herunterladen.",
    "✎ Einträge: Zeiten korrigieren oder nachtragen.",
-   "👥 Team: Mitarbeiter anlegen, PIN anzeigen oder zurücksetzen, auf inaktiv setzen.",
+   "👥 Team: Mitarbeiter anlegen, PIN anzeigen oder zurücksetzen, auf inaktiv setzen. Mit 📁 legst du Dokumente ab (z. B. Arbeitsvertrag) – nur für Admins sichtbar.",
    "⚙️ Einstellungen: Standorte, Bereiche, Mittagspause, Dienstzeiten und Erinnerung „Noch eingestempelt?“."
   ]
  },
@@ -2411,9 +2411,106 @@ function PinReveal({ emp, token }) {
   );
 }
 
+// =====================================================================
+// PERSONAL-DOKUMENTE je Mitarbeiter (nur Admins): Arbeitsvertrag, Anmeldung …
+// =====================================================================
+const DOC_ICON = (m) => (m === "application/pdf" ? "📄" : m.startsWith("image/") ? "🖼" : /word/.test(m) ? "📝" : /sheet|excel/.test(m) ? "📊" : "📎");
+const fmtSize = (b) => (b >= 1048576 ? (b / 1048576).toFixed(1).replace(".", ",") + " MB" : Math.max(1, Math.round(b / 1024)) + " KB");
+function readFileAsDataUrl(file) {
+  return new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = () => rej(new Error("Datei konnte nicht gelesen werden.")); r.readAsDataURL(file); });
+}
+function DocsModal({ emp, refresh, onClose }) {
+  const token = store.get(TOKEN_KEY);
+  const [docs, setDocs] = useState(null);
+  const [cats, setCats] = useState(["Arbeitsvertrag", "Anmeldung", "Ausweis", "Zeugnis", "Krankmeldung", "Sonstiges"]);
+  const [cat, setCat] = useState("Arbeitsvertrag");
+  const [busy, setBusy] = useState("");
+  const [err, setErr] = useState("");
+  const fileRef = useRef(null), camRef = useRef(null);
+  async function load() {
+    try { const r = await api("/employees/" + emp.id + "/docs", { token }); setDocs(r.docs); if (r.categories) setCats(r.categories); } catch (e) { setErr(e.message); setDocs([]); }
+  }
+  useEffect(() => { load(); }, []);
+  async function upload(files) {
+    if (!files || !files.length) return;
+    setErr("");
+    for (const f of Array.from(files).slice(0, 10)) {
+      if (f.size > 10 * 1024 * 1024) { setErr(`${f.name}: zu groß (max. 10 MB)`); continue; }
+      setBusy(f.name);
+      try {
+        // Fotos werden verkleinert, PDFs & Dokumente bleiben unverändert
+        const dataUrl = /^image\/(jpeg|png|webp)$/.test(f.type) ? await compressImage(f, 2200, 0.85) : await readFileAsDataUrl(f);
+        const name = /^image\//.test(f.type) && !/\.(jpe?g|png|webp)$/i.test(f.name) ? (f.name || "Foto") + ".jpg" : f.name || "Foto.jpg";
+        await api("/employees/" + emp.id + "/docs", { method: "POST", token, body: { dataUrl, name, category: cat } });
+      } catch (e) { setErr(e.message); }
+    }
+    setBusy("");
+    await load(); refresh && refresh();
+  }
+  async function openDoc(d, download) {
+    const win = !download ? window.open("", "_blank") : null;
+    try {
+      const r = await fetch("/api/docs/" + d.id + "/file", { headers: { Authorization: "Bearer " + token } });
+      if (!r.ok) throw new Error("Datei konnte nicht geladen werden.");
+      const url = URL.createObjectURL(await r.blob());
+      if (win) win.location.href = url;
+      else { const a = document.createElement("a"); a.href = url; a.download = d.name; document.body.appendChild(a); a.click(); a.remove(); }
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    } catch (e) { if (win) win.close(); setErr(e.message); }
+  }
+  async function del(d) {
+    if (!confirm(`„${d.name}“ löschen?`)) return;
+    try { await api("/docs/" + d.id, { method: "DELETE", token }); await load(); refresh && refresh(); } catch (e) { setErr(e.message); }
+  }
+  const groups = {};
+  (docs || []).forEach((d) => { (groups[d.category] = groups[d.category] || []).push(d); });
+  return (
+    <Modal onClose={onClose} wide>
+      <h3 className="text-sm font-medium mb-0.5">📁 Dokumente – <span translate="no">{emp.name}</span></h3>
+      <p className="text-[11px] mb-3" style={{ color: COLORS.textDim }}>🔒 Nur für Admins sichtbar. Der Mitarbeiter sieht diese Dateien nicht.</p>
+      <div className="rounded-lg p-3 mb-3" style={{ background: COLORS.bg, border: `1px solid ${COLORS.panelBorder}` }}>
+        <Field label="Art des Dokuments"><Select value={cat} onChange={setCat}>{cats.map((c) => <option key={c} value={c}>{c}</option>)}</Select></Field>
+        <input ref={fileRef} type="file" multiple className="hidden" accept=".pdf,.doc,.docx,.xls,.xlsx,.txt,image/*" onChange={(e) => { upload(e.target.files); e.target.value = ""; }} />
+        <input ref={camRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => { upload(e.target.files); e.target.value = ""; }} />
+        <div className="flex gap-2 flex-wrap">
+          <Btn onClick={() => fileRef.current.click()} disabled={!!busy}>📎 Datei hochladen</Btn>
+          <Btn kind="ghost" onClick={() => camRef.current.click()} disabled={!!busy}>📷 Fotografieren</Btn>
+        </div>
+        <p className="text-[11px] mt-2" style={{ color: COLORS.textDim }}>PDF, Foto, Word oder Excel – max. 10 MB pro Datei. Papier-Dokumente einfach abfotografieren.</p>
+        {busy && <p className="text-xs mt-2" style={{ color: COLORS.accent }}>⏳ <span translate="no">{busy}</span> …</p>}
+      </div>
+      {err && <p className="text-xs mb-2" style={{ color: COLORS.danger }}>{err}</p>}
+      {docs === null ? <Empty>…</Empty> : docs.length === 0 ? <Empty>Noch keine Dokumente.</Empty> : (
+        <div className="space-y-3 mb-3">
+          {cats.filter((c) => groups[c]).concat(Object.keys(groups).filter((c) => !cats.includes(c))).map((c) => (
+            <div key={c}>
+              <p className="text-[11px] uppercase tracking-wider mb-1" style={{ color: COLORS.accent }}>{c}</p>
+              <div className="space-y-1.5">
+                {groups[c].map((d) => (
+                  <div key={d.id} className="flex items-center gap-2 px-2.5 py-2 rounded-lg" style={{ background: COLORS.bg }}>
+                    <span className="text-lg">{DOC_ICON(d.mime)}</span>
+                    <button onClick={() => openDoc(d)} className="flex-1 text-left min-w-0">
+                      <div className="text-sm truncate underline decoration-dotted underline-offset-2" translate="no">{d.name}</div>
+                      <div className="text-[10px]" style={{ color: COLORS.textDim }}>{fmtSize(d.size)} · {new Date(d.at).toLocaleDateString(window.I18N.locale)} · <span translate="no">{d.byName}</span></div>
+                    </button>
+                    <button onClick={() => openDoc(d, true)} title="Herunterladen" className="w-8 h-8 rounded-md text-sm" style={{ border: `1px solid ${COLORS.panelBorder}` }}>⬇</button>
+                    <button onClick={() => del(d)} title="Löschen" className="w-8 h-8 rounded-md text-sm" style={{ color: COLORS.danger, border: `1px solid ${COLORS.panelBorder}` }}>🗑</button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      <Btn kind="ghost" onClick={onClose} className="w-full">Schließen</Btn>
+    </Modal>
+  );
+}
+
 function TeamView({ S, act, openAdmins, token }) {
   const [name, setName] = useState("");
   const [edit, setEdit] = useState(null);
+  const [docsFor, setDocsFor] = useState(null);
   async function add() {
     if (!name.trim()) return;
     try { await act("/employees", { method: "POST", body: { name } }); setName(""); } catch (e) {}
@@ -2436,12 +2533,16 @@ function TeamView({ S, act, openAdmins, token }) {
                 {e.hasPin ? <PinReveal emp={e} token={token} /> : <span style={{ color: COLORS.warn }}>⏳ Wartet auf erste Anmeldung (legt PIN selbst fest)</span>}{e.weeklyHours ? ` · ${e.weeklyHours} h/Woche` : ""}
               </p>
             </div>
-            <Btn kind="ghost" onClick={() => setEdit(e)} className="text-xs">Bearbeiten</Btn>
+            <div className="flex gap-1.5 flex-shrink-0">
+              <Btn kind="ghost" onClick={() => setDocsFor(e)} className="text-xs" title="Dokumente">📁{(S.docCounts || {})[e.id] ? <span>{" " + S.docCounts[e.id]}</span> : null}</Btn>
+              <Btn kind="ghost" onClick={() => setEdit(e)} className="text-xs">Bearbeiten</Btn>
+            </div>
           </Panel>
         ))}
       </div>
       <Btn kind="ghost" onClick={openAdmins}>🔐 Admins verwalten</Btn>
       {edit && <EmployeeModal emp={edit} act={act} locations={S.locations || []} onClose={() => setEdit(null)} />}
+      {docsFor && <DocsModal emp={docsFor} refresh={() => act("/state").catch(() => {})} onClose={() => setDocsFor(null)} />}
     </div>
   );
 }
