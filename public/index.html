@@ -352,6 +352,7 @@ const HELP = [
   "items": [
    "🔔 Benachrichtigungen aktivieren, damit du Nachrichten, Dienste und Erinnerungen bekommst.",
    "📞 Oben findest du das Telefonbuch: Filialen, Mitarbeiter, Hotels, Skischulen und Lieferanten – Nummer antippen zum Anrufen.",
+   "Deine eigene Nummer und E-Mail trägst du im Telefonbuch unter „+ Meine Nummer eintragen“ ein und kannst sie jederzeit ändern.",
    "Oben über die Flagge änderst du die Sprache, mit 🔑 deine PIN.",
    "Am Handy: im Browser „Zum Startbildschirm hinzufügen“ – dann ist die App wie ein normales Symbol da.",
    "PIN vergessen? Ein Admin kann sie dir sagen."
@@ -374,6 +375,9 @@ function PhoneBookModal({ S, isAdmin, act, onClose }) {
   const [cat, setCat] = useState("alle");
   const [q, setQ] = useState("");
   const [edit, setEdit] = useState(null);
+  const [mine, setMine] = useState(false);
+  const me = S.me;
+  const myContact = me ? (S.contacts || []).find((c) => c.employeeId === me.id) || (S.contacts || []).find((c) => c.category === "mitarbeiter" && !c.employeeId && c.name.trim().toLowerCase() === me.name.trim().toLowerCase()) : null;
   const all = (S.contacts || []).slice().sort((a, b) => a.name.localeCompare(b.name, "de"));
   const needle = q.trim().toLowerCase();
   const list = all.filter((c) => (cat === "alle" || c.category === cat) && (!needle || [c.name, c.person, c.phone, c.phone2, c.email, c.address, c.note].some((v) => v && String(v).toLowerCase().includes(needle))));
@@ -384,6 +388,7 @@ function PhoneBookModal({ S, isAdmin, act, onClose }) {
       <div className="flex items-center justify-between gap-2 mb-3">
         <h3 className="text-base font-semibold">📞 Telefonbuch</h3>
         {isAdmin && <Btn onClick={() => setEdit({ category: cat === "alle" ? "filialen" : cat })} className="text-xs">+ Neuer Kontakt</Btn>}
+        {!isAdmin && me && <Btn onClick={() => setMine(true)} className="text-xs">{myContact ? "✏️ Meine Daten ändern" : "+ Meine Nummer eintragen"}</Btn>}
       </div>
       <TextInput value={q} onChange={(e) => setQ(e.target.value)} placeholder="🔍 Suchen…" className="mb-2" />
       <div className="mb-3 overflow-x-auto scrollbar-thin">
@@ -406,6 +411,7 @@ function PhoneBookModal({ S, isAdmin, act, onClose }) {
                         {c.person && <div className="text-xs" style={{ color: COLORS.textDim }}>{c.person}</div>}
                       </div>
                       {isAdmin && <button onClick={() => setEdit(c)} className="text-xs px-1" style={{ color: COLORS.textDim }}>✎</button>}
+                      {!isAdmin && myContact && c.id === myContact.id && <button onClick={() => setMine(true)} className="text-xs px-1" style={{ color: COLORS.accent2 }}>✎ <span>du</span></button>}
                     </div>
                     <div className="flex flex-wrap gap-1.5 mt-2" translate="no">
                       {c.phone && <a href={telHref(c.phone)} className="text-xs px-2.5 py-1.5 rounded-lg font-medium" style={{ background: COLORS.accent2, color: "#0E1411" }}>📞 {c.phone}</a>}
@@ -423,6 +429,38 @@ function PhoneBookModal({ S, isAdmin, act, onClose }) {
       </div>
       <Btn kind="ghost" onClick={onClose} className="w-full">Schließen</Btn>
       {edit && <ContactModal S={S} act={act} contact={edit.id ? edit : null} initCat={edit.category} onClose={() => setEdit(null)} />}
+      {mine && <MyContactModal me={me} contact={myContact} act={act} onClose={() => setMine(false)} />}
+    </Modal>
+  );
+}
+
+// Mitarbeiter trägt seine eigene Nummer / E-Mail ins Telefonbuch ein
+function MyContactModal({ me, contact, act, onClose }) {
+  const [f, setF] = useState({ phone: (contact && contact.phone) || "", phone2: (contact && contact.phone2) || "", email: (contact && contact.email) || "", note: (contact && contact.note) || "" });
+  const [err, setErr] = useState("");
+  const set = (k) => (e) => setF((p) => ({ ...p, [k]: e.target.value }));
+  async function save() {
+    setErr("");
+    try { await act("/contacts/me", { method: "PUT", body: f }); onClose(); } catch (e) { setErr(e.message); }
+  }
+  async function del() {
+    if (!confirm("Deinen Eintrag aus dem Telefonbuch entfernen?")) return;
+    try { await act("/contacts/me", { method: "DELETE" }); onClose(); } catch (e) {}
+  }
+  return (
+    <Modal onClose={onClose}>
+      <h3 className="text-sm font-medium mb-0.5">👤 Meine Kontaktdaten</h3>
+      <p className="text-xs mb-3" style={{ color: COLORS.textDim }}><span translate="no">{me.name}</span> · <span>sichtbar für das ganze Team im Telefonbuch</span></p>
+      <Field label="Telefon"><TextInput type="tel" value={f.phone} onChange={set("phone")} placeholder="+43 …" /></Field>
+      <Field label="Telefon 2 (optional)"><TextInput type="tel" value={f.phone2} onChange={set("phone2")} /></Field>
+      <Field label="E-Mail (optional)"><TextInput type="email" value={f.email} onChange={set("email")} /></Field>
+      <Field label="Notiz (optional)"><TextInput value={f.note} onChange={set("note")} placeholder="z. B. nur WhatsApp, erreichbar ab 8 Uhr" /></Field>
+      {err && <p className="text-xs mb-2" style={{ color: COLORS.danger }}>{err}</p>}
+      <div className="flex gap-2">
+        <Btn onClick={save} className="flex-1">Speichern</Btn>
+        {contact && <Btn kind="ghost" onClick={del}>🗑</Btn>}
+        <Btn kind="ghost" onClick={onClose}>Abbrechen</Btn>
+      </div>
     </Modal>
   );
 }
