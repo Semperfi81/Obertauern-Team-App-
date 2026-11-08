@@ -71,6 +71,14 @@ function normalize(d) {
     });
     d.settings.seedPartnerHotels = true;
   }
+  // Einmalig: Skischulen Obertauern ins Telefonbuch (Stand Nov. 2026)
+  if (!d.settings.seedSkiSchools) {
+    const schools = [{"name": "Skischule TOP Obertauern", "phone": "+43 6456 7678", "phone2": "+43 664 160 56 05", "email": "info@ski-top.at", "address": "Römerstraße 65, 5562 Obertauern", "note": "ski-top.at – Skischule Top Obertauern Steiner GmbH"}, {"name": "Skischule Krallinger", "phone": "+43 6456 720 07", "phone2": "", "email": "info@skischule-krallinger.at", "address": "Römerstraße 73, 5562 Obertauern", "note": "skischule-krallinger.at – Leitung Mag. Bettina Krallinger"}, {"name": "CSA Skischule Silvia Grillitsch", "phone": "+43 6456 7462", "phone2": "", "email": "csa@skischule.co.at", "address": "Römerstraße 53, 5562 Obertauern", "note": "skischule.co.at – Ski, Snowboard, Langlauf"}, {"name": "Skischule Frau Holle", "phone": "+43 6456 72009-10", "phone2": "", "email": "info@skischule-frauholle.at", "address": "Ringstraße 74, 5562 Obertauern", "note": "skischule-frauholle.at"}, {"name": "Skischule Koch", "phone": "+43 6456 73686", "phone2": "", "email": "info@skikoch.at", "address": "Römerstraße 23, 5562 Obertauern", "note": "skikoch.at – Ski & Snowbike"}, {"name": "Local Guides am Tauern", "phone": "+43 660 961 00 88", "phone2": "", "email": "", "address": "Römerstraße 50, 5562 Obertauern", "note": "local-guides.at – Ski- & Snowboardschule, Freeride-Center"}, {"name": "Blue Tomato Snowboardschule", "phone": "+43 6456 200 36", "phone2": "", "email": "", "address": "", "note": "blue-tomato.com – Snowboardschule Obertauern"}];
+    schools.forEach((h) => {
+      if (!d.contacts.some((c) => c.name.toLowerCase() === h.name.toLowerCase())) d.contacts.push({ id: crypto.randomBytes(6).toString("hex"), createdAt: Date.now(), category: "skischulen", person: "", ...h });
+    });
+    d.settings.seedSkiSchools = true;
+  }
   // Einmalig: Stammfiliale Grünwaldkopf für Peter Moisl-Posch, Karin und Marco (Wunsch von Peter)
   if (!d.settings.homeFixGW) {
     const gw = d.settings.locations.find((l) => /grün/i.test(l));
@@ -1222,7 +1230,7 @@ app.delete("/api/signatures/:id", requireUser, (req, res) => {
 // ---------------------------------------------------------------------------
 // Telefonbuch (Filialen, Mitarbeiter, Hotels, Lieferanten)
 // ---------------------------------------------------------------------------
-const CONTACT_CATS = ["filialen", "mitarbeiter", "hotels", "lieferanten"];
+const CONTACT_CATS = ["filialen", "mitarbeiter", "hotels", "skischulen", "lieferanten"];
 function contactFromBody(b, c) {
   const out = { ...(c || { id: uid(), createdAt: Date.now() }) };
   for (const k of ["name", "person", "phone", "phone2", "email", "address", "note"]) if (b[k] !== undefined) out[k] = str(b[k], k === "note" ? 500 : k === "address" ? 200 : 120);
