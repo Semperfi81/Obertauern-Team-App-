@@ -38,7 +38,7 @@ function emptyData() {
   return {
     admins: [], employees: [], timeEntries: [], todos: [], tasks: [],
     shifts: [], checklistTemplates: [], checklistRuns: [], sessions: [], messages: [], pushSubs: [],
-    reminders: [], absences: [], ideas: [], employeeDocs: [], signatures: [],
+    reminders: [], absences: [], ideas: [], employeeDocs: [], signatures: [], contacts: [],
     settings: { locations: DEFAULT_LOCATIONS.slice(), areas: DEFAULT_AREAS.slice(), lunch: { ...DEFAULT_LUNCH } },
   };
 }
@@ -306,6 +306,8 @@ app.get("/api/state", (req, res) => {
     reminders: data.reminders.filter((r) => canSeeReminder(r, admin, employee)),
     // Ideen & Notizen: Admins sehen alle, Mitarbeiter nur ihre eigenen
     ideas: admin ? data.ideas : data.ideas.filter((i) => i.authorId === employee.id),
+    // Telefonbuch: alle sehen es, nur Admins bearbeiten
+    contacts: data.contacts,
     // Unterschriften der Stundenzettel (Mitarbeiter sieht nur seine eigenen)
     signatures: data.signatures.filter((g) => admin || g.employeeId === employee.id).map((g) => ({ ...g, valid: g.hash === monthHash(g.employeeId, g.ym) })),
     absences: admin ? data.absences : data.absences
@@ -1207,6 +1209,35 @@ app.delete("/api/signatures/:id", requireUser, (req, res) => {
   deletePhotos([g.image]).catch(() => {});
   persist();
   res.json({ ok: true });
+});
+
+// ---------------------------------------------------------------------------
+// Telefonbuch (Filialen, Mitarbeiter, Hotels, Lieferanten)
+// ---------------------------------------------------------------------------
+const CONTACT_CATS = ["filialen", "mitarbeiter", "hotels", "lieferanten"];
+function contactFromBody(b, c) {
+  const out = { ...(c || { id: uid(), createdAt: Date.now() }) };
+  for (const k of ["name", "person", "phone", "phone2", "email", "address", "note"]) if (b[k] !== undefined) out[k] = str(b[k], k === "note" ? 500 : k === "address" ? 200 : 120);
+  if (b.category !== undefined) out.category = CONTACT_CATS.includes(b.category) ? b.category : "lieferanten";
+  if (!out.category) out.category = "lieferanten";
+  if (!out.name) return { error: "Name erforderlich." };
+  if (!out.phone && !out.phone2 && !out.email) return { error: "Bitte Telefonnummer oder E-Mail angeben." };
+  return out;
+}
+app.post("/api/contacts", requireAdmin, (req, res) => {
+  const c = contactFromBody(req.body || {});
+  if (c.error) return res.status(400).json(c);
+  data.contacts.push(c); persist(); res.json(c);
+});
+app.patch("/api/contacts/:id", requireAdmin, (req, res) => {
+  const i = data.contacts.findIndex((c) => c.id === req.params.id);
+  if (i < 0) return res.status(404).json({ error: "Nicht gefunden." });
+  const c = contactFromBody(req.body || {}, data.contacts[i]);
+  if (c.error) return res.status(400).json(c);
+  data.contacts[i] = c; persist(); res.json(c);
+});
+app.delete("/api/contacts/:id", requireAdmin, (req, res) => {
+  data.contacts = data.contacts.filter((c) => c.id !== req.params.id); persist(); res.json({ ok: true });
 });
 
 // Foto zu einer Aufgabe hinzufügen / entfernen
