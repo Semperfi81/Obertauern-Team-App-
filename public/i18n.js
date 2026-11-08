@@ -588,6 +588,40 @@ window.I18N_PATTERNS.push(
 ["{x} hat keine Benachrichtigungen aktiviert – die Nachricht konnte nicht zugestellt werden.", ["{x} has not enabled notifications – the message could not be delivered.", "{x} no tiene las notificaciones activadas – no se pudo entregar el mensaje.", "{x} não tem as notificações ativas – a mensagem não foi entregue.", "{x} nemá zapnuté upozornenia – správu sa nepodarilo doručiť.", "{x} nema uključene obavijesti – poruka nije dostavljena.", "{x} nem kapcsolta be az értesítéseket – az üzenetet nem lehetett kézbesíteni."]]
 );
 
+// Ergänzungen (Telefonbuch)
+Object.assign(window.I18N_DICT, {
+"📞 Telefonbuch": ["📞 Phone book", "📞 Agenda", "📞 Lista telefónica", "📞 Telefónny zoznam", "📞 Imenik", "📞 Telefonkönyv"],
+"Telefonbuch": ["Phone book", "Agenda", "Lista telefónica", "Telefónny zoznam", "Imenik", "Telefonkönyv"],
+"+ Neuer Kontakt": ["+ New contact", "+ Nuevo contacto", "+ Novo contacto", "+ Nový kontakt", "+ Novi kontakt", "+ Új kontakt"],
+"🔍 Suchen…": ["🔍 Search…", "🔍 Buscar…", "🔍 Pesquisar…", "🔍 Hľadať…", "🔍 Traži…", "🔍 Keresés…"],
+"🏪 Filialen": ["🏪 Branches", "🏪 Filiales", "🏪 Filiais", "🏪 Pobočky", "🏪 Poslovnice", "🏪 Fiókok"],
+"👤 Mitarbeiter": ["👤 Staff", "👤 Empleados", "👤 Colaboradores", "👤 Zamestnanci", "👤 Zaposlenici", "👤 Munkatársak"],
+"🏨 Hotels": ["🏨 Hotels", "🏨 Hoteles", "🏨 Hotéis", "🏨 Hotely", "🏨 Hoteli", "🏨 Hotelek"],
+"🚚 Lieferanten": ["🚚 Suppliers", "🚚 Proveedores", "🚚 Fornecedores", "🚚 Dodávatelia", "🚚 Dobavljači", "🚚 Beszállítók"],
+"Filialen": ["Branches", "Filiales", "Filiais", "Pobočky", "Poslovnice", "Fiókok"],
+"Hotels": ["Hotels", "Hoteles", "Hotéis", "Hotely", "Hoteli", "Hotelek"],
+"Lieferanten": ["Suppliers", "Proveedores", "Fornecedores", "Dodávatelia", "Dobavljači", "Beszállítók"],
+"Noch keine Kontakte – mit „+ Neuer Kontakt“ anlegen.": ["No contacts yet – add them with “+ New contact”.", "Aún no hay contactos – créalos con «+ Nuevo contacto».", "Ainda sem contactos – adiciona com «+ Novo contacto».", "Zatiaľ žiadne kontakty – pridaj cez „+ Nový kontakt“.", "Još nema kontakata – dodaj ih s „+ Novi kontakt“.", "Még nincs kontakt – add hozzá: „+ Új kontakt“."],
+"Noch keine Kontakte eingetragen.": ["No contacts entered yet.", "Aún no hay contactos.", "Ainda sem contactos.", "Zatiaľ žiadne kontakty.", "Još nema kontakata.", "Még nincs kontakt."],
+"Nichts gefunden.": ["Nothing found.", "No se encontró nada.", "Nada encontrado.", "Nič sa nenašlo.", "Ništa nije pronađeno.", "Nincs találat."],
+"Kontakt bearbeiten": ["Edit contact", "Editar contacto", "Editar contacto", "Upraviť kontakt", "Uredi kontakt", "Kontakt szerkesztése"],
+"Neuer Kontakt": ["New contact", "Nuevo contacto", "Novo contacto", "Nový kontakt", "Novi kontakt", "Új kontakt"],
+"Kategorie": ["Category", "Categoría", "Categoria", "Kategória", "Kategorija", "Kategória"],
+"Ansprechpartner (optional)": ["Contact person (optional)", "Persona de contacto (opcional)", "Pessoa de contacto (opcional)", "Kontaktná osoba (nepovinné)", "Kontakt osoba (neobavezno)", "Kapcsolattartó (opcionális)"],
+"Telefon": ["Phone", "Teléfono", "Telefone", "Telefón", "Telefon", "Telefon"],
+"Telefon 2 (optional)": ["Phone 2 (optional)", "Teléfono 2 (opcional)", "Telefone 2 (opcional)", "Telefón 2 (nepovinné)", "Telefon 2 (neobavezno)", "Telefon 2 (opcionális)"],
+"E-Mail (optional)": ["Email (optional)", "Correo (opcional)", "E-mail (opcional)", "E-mail (nepovinné)", "E-pošta (neobavezno)", "E-mail (opcionális)"],
+"Adresse (optional)": ["Address (optional)", "Dirección (opcional)", "Morada (opcional)", "Adresa (nepovinné)", "Adresa (neobavezno)", "Cím (opcionális)"],
+"z. B. Öffnungszeiten, Kundennummer": ["e.g. opening hours, customer number", "p. ej. horario, número de cliente", "p. ex. horário, número de cliente", "napr. otváracie hodiny, zákaznícke číslo", "npr. radno vrijeme, broj kupca", "pl. nyitvatartás, ügyfélszám"],
+"z. B. Hotel Edelweiss": ["e.g. Hotel Edelweiss", "p. ej. Hotel Edelweiss", "p. ex. Hotel Edelweiss", "napr. Hotel Edelweiss", "npr. Hotel Edelweiss", "pl. Hotel Edelweiss"],
+"z. B. Wintersteiger Service": ["e.g. Wintersteiger Service", "p. ej. Wintersteiger Service", "p. ex. Wintersteiger Service", "napr. Wintersteiger Service", "npr. Wintersteiger Service", "pl. Wintersteiger Service"],
+"z. B. Filiale Grünwaldkopf": ["e.g. Grünwaldkopf branch", "p. ej. Filial Grünwaldkopf", "p. ex. Filial Grünwaldkopf", "napr. pobočka Grünwaldkopf", "npr. poslovnica Grünwaldkopf", "pl. Grünwaldkopf fiók"],
+"Kontakt löschen?": ["Delete contact?", "¿Eliminar contacto?", "Eliminar contacto?", "Vymazať kontakt?", "Obrisati kontakt?", "Kontakt törlése?"],
+"Bitte Telefonnummer oder E-Mail angeben.": ["Please enter a phone number or email.", "Indica un teléfono o correo.", "Indica um telefone ou e-mail.", "Zadaj telefón alebo e-mail.", "Unesi telefon ili e-poštu.", "Adj meg telefonszámot vagy e-mailt."],
+"Name erforderlich.": ["Name required.", "Se requiere nombre.", "Nome obrigatório.", "Meno je povinné.", "Ime je obavezno.", "Név megadása kötelező."],
+"📞 Oben findest du das Telefonbuch: Filialen, Mitarbeiter, Hotels und Lieferanten – Nummer antippen zum Anrufen.": ["📞 At the top you'll find the phone book: branches, staff, hotels and suppliers – tap a number to call.", "📞 Arriba está la agenda: filiales, empleados, hoteles y proveedores – toca un número para llamar.", "📞 Em cima está a lista telefónica: filiais, colaboradores, hotéis e fornecedores – toca num número para ligar.", "📞 Hore nájdeš telefónny zoznam: pobočky, zamestnanci, hotely a dodávatelia – ťukni na číslo a zavolaj.", "📞 Gore je imenik: poslovnice, zaposlenici, hoteli i dobavljači – dodirni broj za poziv.", "📞 Fent találod a telefonkönyvet: fiókok, munkatársak, hotelek és beszállítók – koppints a számra a híváshoz."]
+});
+
 // ---- Übersetzungs-Engine: übersetzt die deutsche Oberfläche im Browser ----
 (function () {
   var KEY = "team-app-lang";

@@ -351,6 +351,7 @@ const HELP = [
   "title": "⚙️ Allgemein",
   "items": [
    "🔔 Benachrichtigungen aktivieren, damit du Nachrichten, Dienste und Erinnerungen bekommst.",
+   "📞 Oben findest du das Telefonbuch: Filialen, Mitarbeiter, Hotels und Lieferanten – Nummer antippen zum Anrufen.",
    "Oben über die Flagge änderst du die Sprache, mit 🔑 deine PIN.",
    "Am Handy: im Browser „Zum Startbildschirm hinzufügen“ – dann ist die App wie ein normales Symbol da.",
    "PIN vergessen? Ein Admin kann sie dir sagen."
@@ -358,6 +359,113 @@ const HELP = [
   "admin": []
  }
 ];
+// =====================================================================
+// TELEFONBUCH – alle sehen es, Admins pflegen es
+// =====================================================================
+const CONTACT_CATS = [
+  { id: "filialen", label: "Filialen", icon: "🏪", color: "#4DA8A0" },
+  { id: "mitarbeiter", label: "Mitarbeiter", icon: "👤", color: "#E8A33D" },
+  { id: "hotels", label: "Hotels", icon: "🏨", color: "#6FA8DC" },
+  { id: "lieferanten", label: "Lieferanten", icon: "🚚", color: "#B48EDB" },
+];
+const telHref = (p) => "tel:" + String(p || "").replace(/[^\d+]/g, "");
+function PhoneBookModal({ S, isAdmin, act, onClose }) {
+  const [cat, setCat] = useState("alle");
+  const [q, setQ] = useState("");
+  const [edit, setEdit] = useState(null);
+  const all = (S.contacts || []).slice().sort((a, b) => a.name.localeCompare(b.name, "de"));
+  const needle = q.trim().toLowerCase();
+  const list = all.filter((c) => (cat === "alle" || c.category === cat) && (!needle || [c.name, c.person, c.phone, c.phone2, c.email, c.address, c.note].some((v) => v && String(v).toLowerCase().includes(needle))));
+  const cats = cat === "alle" ? CONTACT_CATS : CONTACT_CATS.filter((c) => c.id === cat);
+  const linkBtn = { border: `1px solid ${COLORS.panelBorder}`, color: COLORS.text };
+  return (
+    <Modal onClose={onClose} wide>
+      <div className="flex items-center justify-between gap-2 mb-3">
+        <h3 className="text-base font-semibold">📞 Telefonbuch</h3>
+        {isAdmin && <Btn onClick={() => setEdit({ category: cat === "alle" ? "filialen" : cat })} className="text-xs">+ Neuer Kontakt</Btn>}
+      </div>
+      <TextInput value={q} onChange={(e) => setQ(e.target.value)} placeholder="🔍 Suchen…" className="mb-2" />
+      <div className="mb-3 overflow-x-auto scrollbar-thin">
+        <Segmented value={cat} onChange={setCat} options={[{ id: "alle", label: "Alle" }, ...CONTACT_CATS.map((c) => ({ id: c.id, label: c.icon + " " + c.label }))]} />
+      </div>
+      {list.length === 0 && <Empty>{all.length === 0 ? (isAdmin ? "Noch keine Kontakte – mit „+ Neuer Kontakt“ anlegen." : "Noch keine Kontakte eingetragen.") : "Nichts gefunden."}</Empty>}
+      <div className="space-y-4 mb-3">
+        {cats.map((cc) => {
+          const items = list.filter((c) => c.category === cc.id);
+          if (!items.length) return null;
+          return (
+            <div key={cc.id}>
+              <p className="text-[11px] uppercase tracking-wider mb-1.5" style={{ color: cc.color }}>{cc.icon} {cc.label}</p>
+              <div className="space-y-1.5">
+                {items.map((c) => (
+                  <div key={c.id} className="rounded-lg px-3 py-2.5" style={{ background: COLORS.bg, borderLeft: `3px solid ${cc.color}` }}>
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0" translate="no">
+                        <div className="text-sm font-medium">{c.name}</div>
+                        {c.person && <div className="text-xs" style={{ color: COLORS.textDim }}>{c.person}</div>}
+                      </div>
+                      {isAdmin && <button onClick={() => setEdit(c)} className="text-xs px-1" style={{ color: COLORS.textDim }}>✎</button>}
+                    </div>
+                    <div className="flex flex-wrap gap-1.5 mt-2" translate="no">
+                      {c.phone && <a href={telHref(c.phone)} className="text-xs px-2.5 py-1.5 rounded-lg font-medium" style={{ background: COLORS.accent2, color: "#0E1411" }}>📞 {c.phone}</a>}
+                      {c.phone2 && <a href={telHref(c.phone2)} className="text-xs px-2.5 py-1.5 rounded-lg" style={linkBtn}>📞 {c.phone2}</a>}
+                      {c.email && <a href={"mailto:" + c.email} className="text-xs px-2.5 py-1.5 rounded-lg truncate max-w-full" style={linkBtn}>✉️ {c.email}</a>}
+                      {c.address && <a href={"https://maps.google.com/?q=" + encodeURIComponent(c.address)} target="_blank" rel="noopener" className="text-xs px-2.5 py-1.5 rounded-lg" style={linkBtn}>📍 {c.address}</a>}
+                    </div>
+                    {c.note && <p className="text-[11px] mt-1.5 whitespace-pre-wrap" style={{ color: COLORS.textDim }} translate="no">{c.note}</p>}
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      <Btn kind="ghost" onClick={onClose} className="w-full">Schließen</Btn>
+      {edit && <ContactModal S={S} act={act} contact={edit.id ? edit : null} initCat={edit.category} onClose={() => setEdit(null)} />}
+    </Modal>
+  );
+}
+
+function ContactModal({ S, act, contact, initCat, onClose }) {
+  const [f, setF] = useState(() => ({ category: initCat || "filialen", name: "", person: "", phone: "", phone2: "", email: "", address: "", note: "", ...(contact || {}) }));
+  const [err, setErr] = useState("");
+  const set = (k) => (v) => setF((p) => ({ ...p, [k]: v && v.target ? v.target.value : v }));
+  async function save() {
+    setErr("");
+    try { await act(contact ? "/contacts/" + contact.id : "/contacts", { method: contact ? "PATCH" : "POST", body: f }); onClose(); } catch (e) { setErr(e.message); }
+  }
+  async function del() {
+    if (!confirm("Kontakt löschen?")) return;
+    try { await act("/contacts/" + contact.id, { method: "DELETE" }); onClose(); } catch (e) {}
+  }
+  return (
+    <Modal onClose={onClose}>
+      <h3 className="text-sm font-medium mb-3">{contact ? "Kontakt bearbeiten" : "Neuer Kontakt"}</h3>
+      <Field label="Kategorie">
+        <Select value={f.category} onChange={set("category")}>{CONTACT_CATS.map((c) => <option key={c.id} value={c.id}>{c.icon} {c.label}</option>)}</Select>
+      </Field>
+      <Field label="Name">
+        <TextInput value={f.name} onChange={set("name")} list="contact-emps" placeholder={f.category === "hotels" ? "z. B. Hotel Edelweiss" : f.category === "lieferanten" ? "z. B. Wintersteiger Service" : f.category === "filialen" ? "z. B. Filiale Grünwaldkopf" : "Name"} />
+        {f.category === "mitarbeiter" && <datalist id="contact-emps">{S.employees.filter((e) => e.active).map((e) => <option key={e.id} value={e.name} />)}</datalist>}
+      </Field>
+      {f.category !== "mitarbeiter" && <Field label="Ansprechpartner (optional)"><TextInput value={f.person} onChange={set("person")} /></Field>}
+      <div className="grid grid-cols-2 gap-2">
+        <Field label="Telefon"><TextInput type="tel" value={f.phone} onChange={set("phone")} placeholder="+43 …" /></Field>
+        <Field label="Telefon 2 (optional)"><TextInput type="tel" value={f.phone2} onChange={set("phone2")} /></Field>
+      </div>
+      <Field label="E-Mail (optional)"><TextInput type="email" value={f.email} onChange={set("email")} /></Field>
+      {f.category !== "mitarbeiter" && <Field label="Adresse (optional)"><TextInput value={f.address} onChange={set("address")} /></Field>}
+      <Field label="Notiz (optional)"><TextInput value={f.note} onChange={set("note")} placeholder="z. B. Öffnungszeiten, Kundennummer" /></Field>
+      {err && <p className="text-xs mb-2" style={{ color: COLORS.danger }}>{err}</p>}
+      <div className="flex gap-2">
+        <Btn onClick={save} className="flex-1">Speichern</Btn>
+        {contact && <Btn kind="ghost" onClick={del}>🗑</Btn>}
+        <Btn kind="ghost" onClick={onClose}>Abbrechen</Btn>
+      </div>
+    </Modal>
+  );
+}
+
 // Blauer Info-Button: kurze Anleitung, der aktuelle Bereich ist aufgeklappt
 function HelpModal({ tab, isAdmin, onClose }) {
   const [open, setOpen] = useState(tab);
@@ -516,6 +624,8 @@ function App() {
             </div>
           </div>
           <div className="flex items-center gap-1.5 flex-shrink-0">
+            <button onClick={() => setAuthView("phone")} title="Telefonbuch" aria-label="Telefonbuch"
+              className="w-8 h-8 rounded-full text-sm flex items-center justify-center flex-shrink-0" style={{ background: COLORS.accent2 }}>📞</button>
             <button onClick={() => setAuthView("help")} title="Info / Anleitung" aria-label="Info"
               className="w-8 h-8 rounded-full text-sm font-bold flex items-center justify-center flex-shrink-0" style={{ background: INFO_BLUE, color: "#fff", fontFamily: "Georgia, serif" }}>i</button>
             <LangPicker compact />
@@ -578,6 +688,7 @@ function App() {
       <ReminderAlarm S={S} />
       {authView === "manage" && <AdminManageModal token={token} onClose={() => setAuthView(null)} />}
       {authView === "pin" && <ChangePinModal token={token} onClose={() => setAuthView(null)} />}
+      {authView === "phone" && <PhoneBookModal S={S} isAdmin={isAdmin} act={act} onClose={() => setAuthView(null)} />}
       {authView === "help" && <HelpModal tab={tab} isAdmin={isAdmin} onClose={() => setAuthView(null)} />}
     </div>
   );
