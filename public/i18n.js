@@ -628,6 +628,18 @@ Object.assign(window.I18N_DICT, {
 "z. B. Skischule Krallinger": ["e.g. Krallinger ski school", "p. ej. Escuela de esquí Krallinger", "p. ex. Escola de esqui Krallinger", "napr. lyžiarska škola Krallinger", "npr. škola skijanja Krallinger", "pl. Krallinger síiskola"]
 });
 
+Object.assign(window.I18N_DICT, {
+"✏️ Meine Daten ändern": ["✏️ Edit my details", "✏️ Cambiar mis datos", "✏️ Alterar os meus dados", "✏️ Zmeniť moje údaje", "✏️ Promijeni moje podatke", "✏️ Adataim módosítása"],
+"+ Meine Nummer eintragen": ["+ Add my number", "+ Añadir mi número", "+ Adicionar o meu número", "+ Zadať moje číslo", "+ Dodaj moj broj", "+ Saját számom megadása"],
+"du": ["you", "tú", "tu", "ty", "ti", "te"],
+"👤 Meine Kontaktdaten": ["👤 My contact details", "👤 Mis datos de contacto", "👤 Os meus contactos", "👤 Moje kontaktné údaje", "👤 Moji kontakt podaci", "👤 Elérhetőségeim"],
+"sichtbar für das ganze Team im Telefonbuch": ["visible to the whole team in the phone book", "visible para todo el equipo en la agenda", "visível para toda a equipa na lista telefónica", "viditeľné pre celý tím v telefónnom zozname", "vidljivo cijelom timu u imeniku", "a telefonkönyvben az egész csapat látja"],
+"z. B. nur WhatsApp, erreichbar ab 8 Uhr": ["e.g. WhatsApp only, available from 8 am", "p. ej. solo WhatsApp, disponible desde las 8", "p. ex. só WhatsApp, disponível a partir das 8h", "napr. len WhatsApp, k dispozícii od 8:00", "npr. samo WhatsApp, dostupan od 8 sati", "pl. csak WhatsApp, 8 órától elérhető"],
+"Deinen Eintrag aus dem Telefonbuch entfernen?": ["Remove your entry from the phone book?", "¿Quitar tu entrada de la agenda?", "Remover a tua entrada da lista telefónica?", "Odstrániť tvoj záznam z telefónneho zoznamu?", "Ukloniti tvoj unos iz imenika?", "Eltávolítod a bejegyzésed a telefonkönyvből?"],
+"Nur für Mitarbeiter.": ["For staff only.", "Solo para empleados.", "Só para colaboradores.", "Len pre zamestnancov.", "Samo za zaposlenike.", "Csak munkatársaknak."],
+"Deine eigene Nummer und E-Mail trägst du im Telefonbuch unter „+ Meine Nummer eintragen“ ein und kannst sie jederzeit ändern.": ["Add your own number and email in the phone book under “+ Add my number” – you can change them any time.", "Tu número y correo los añades en la agenda con «+ Añadir mi número» y puedes cambiarlos cuando quieras.", "O teu número e e-mail adicionas na lista telefónica em «+ Adicionar o meu número» e podes alterá-los a qualquer momento.", "Svoje číslo a e-mail zadáš v telefónnom zozname cez „+ Zadať moje číslo“ a môžeš ich kedykoľvek zmeniť.", "Svoj broj i e-poštu unosiš u imeniku pod „+ Dodaj moj broj“ i možeš ih uvijek promijeniti.", "A saját számodat és e-mailedet a telefonkönyvben a „+ Saját számom megadása“ gombbal adod meg, és bármikor módosíthatod."]
+});
+
 // ---- Übersetzungs-Engine: übersetzt die deutsche Oberfläche im Browser ----
 (function () {
   var KEY = "team-app-lang";
