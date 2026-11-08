@@ -1240,6 +1240,29 @@ function contactFromBody(b, c) {
   if (!out.phone && !out.phone2 && !out.email) return { error: "Bitte Telefonnummer oder E-Mail angeben." };
   return out;
 }
+// Mitarbeiter pflegen ihren eigenen Eintrag (Kategorie „Mitarbeiter“) selbst
+function ownContact(emp) {
+  return data.contacts.find((c) => c.employeeId === emp.id)
+    || data.contacts.find((c) => c.category === "mitarbeiter" && !c.employeeId && c.name.trim().toLowerCase() === emp.name.trim().toLowerCase());
+}
+app.put("/api/contacts/me", requireUser, (req, res) => {
+  const emp = req.auth.employee;
+  if (!emp) return res.status(400).json({ error: "Nur für Mitarbeiter." });
+  const b = req.body || {};
+  const old = ownContact(emp);
+  const c = contactFromBody({ phone: b.phone, phone2: b.phone2, email: b.email, note: b.note, name: emp.name, category: "mitarbeiter" }, old);
+  if (c.error) return res.status(400).json(c);
+  c.employeeId = emp.id; c.category = "mitarbeiter"; c.name = emp.name; c.person = ""; c.address = "";
+  if (old) data.contacts[data.contacts.indexOf(old)] = c; else data.contacts.push(c);
+  persist(); res.json(c);
+});
+app.delete("/api/contacts/me", requireUser, (req, res) => {
+  const emp = req.auth.employee;
+  if (!emp) return res.status(400).json({ error: "Nur für Mitarbeiter." });
+  const old = ownContact(emp);
+  if (old) { data.contacts = data.contacts.filter((c) => c !== old); persist(); }
+  res.json({ ok: true });
+});
 app.post("/api/contacts", requireAdmin, (req, res) => {
   const c = contactFromBody(req.body || {});
   if (c.error) return res.status(400).json(c);
