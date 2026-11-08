@@ -619,7 +619,13 @@ Object.assign(window.I18N_DICT, {
 "Kontakt löschen?": ["Delete contact?", "¿Eliminar contacto?", "Eliminar contacto?", "Vymazať kontakt?", "Obrisati kontakt?", "Kontakt törlése?"],
 "Bitte Telefonnummer oder E-Mail angeben.": ["Please enter a phone number or email.", "Indica un teléfono o correo.", "Indica um telefone ou e-mail.", "Zadaj telefón alebo e-mail.", "Unesi telefon ili e-poštu.", "Adj meg telefonszámot vagy e-mailt."],
 "Name erforderlich.": ["Name required.", "Se requiere nombre.", "Nome obrigatório.", "Meno je povinné.", "Ime je obavezno.", "Név megadása kötelező."],
-"📞 Oben findest du das Telefonbuch: Filialen, Mitarbeiter, Hotels und Lieferanten – Nummer antippen zum Anrufen.": ["📞 At the top you'll find the phone book: branches, staff, hotels and suppliers – tap a number to call.", "📞 Arriba está la agenda: filiales, empleados, hoteles y proveedores – toca un número para llamar.", "📞 Em cima está a lista telefónica: filiais, colaboradores, hotéis e fornecedores – toca num número para ligar.", "📞 Hore nájdeš telefónny zoznam: pobočky, zamestnanci, hotely a dodávatelia – ťukni na číslo a zavolaj.", "📞 Gore je imenik: poslovnice, zaposlenici, hoteli i dobavljači – dodirni broj za poziv.", "📞 Fent találod a telefonkönyvet: fiókok, munkatársak, hotelek és beszállítók – koppints a számra a híváshoz."]
+"📞 Oben findest du das Telefonbuch: Filialen, Mitarbeiter, Hotels, Skischulen und Lieferanten – Nummer antippen zum Anrufen.": ["📞 At the top you'll find the phone book: branches, staff, hotels, ski schools and suppliers – tap a number to call.", "📞 Arriba está la agenda: filiales, empleados, hoteles, escuelas de esquí y proveedores – toca un número para llamar.", "📞 Em cima está a lista telefónica: filiais, colaboradores, hotéis, escolas de esqui e fornecedores – toca num número para ligar.", "📞 Hore nájdeš telefónny zoznam: pobočky, zamestnanci, hotely, lyžiarske školy a dodávatelia – ťukni na číslo a zavolaj.", "📞 Gore je imenik: poslovnice, zaposlenici, hoteli, škole skijanja i dobavljači – dodirni broj za poziv.", "📞 Fent találod a telefonkönyvet: fiókok, munkatársak, hotelek, síiskolák és beszállítók – koppints a számra a híváshoz."]
+});
+
+Object.assign(window.I18N_DICT, {
+"⛷️ Skischulen": ["⛷️ Ski schools", "⛷️ Escuelas de esquí", "⛷️ Escolas de esqui", "⛷️ Lyžiarske školy", "⛷️ Škole skijanja", "⛷️ Síiskolák"],
+"Skischulen": ["Ski schools", "Escuelas de esquí", "Escolas de esqui", "Lyžiarske školy", "Škole skijanja", "Síiskolák"],
+"z. B. Skischule Krallinger": ["e.g. Krallinger ski school", "p. ej. Escuela de esquí Krallinger", "p. ex. Escola de esqui Krallinger", "napr. lyžiarska škola Krallinger", "npr. škola skijanja Krallinger", "pl. Krallinger síiskola"]
 });
 
 // ---- Übersetzungs-Engine: übersetzt die deutsche Oberfläche im Browser ----

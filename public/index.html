@@ -351,7 +351,7 @@ const HELP = [
   "title": "⚙️ Allgemein",
   "items": [
    "🔔 Benachrichtigungen aktivieren, damit du Nachrichten, Dienste und Erinnerungen bekommst.",
-   "📞 Oben findest du das Telefonbuch: Filialen, Mitarbeiter, Hotels und Lieferanten – Nummer antippen zum Anrufen.",
+   "📞 Oben findest du das Telefonbuch: Filialen, Mitarbeiter, Hotels, Skischulen und Lieferanten – Nummer antippen zum Anrufen.",
    "Oben über die Flagge änderst du die Sprache, mit 🔑 deine PIN.",
    "Am Handy: im Browser „Zum Startbildschirm hinzufügen“ – dann ist die App wie ein normales Symbol da.",
    "PIN vergessen? Ein Admin kann sie dir sagen."
@@ -366,6 +366,7 @@ const CONTACT_CATS = [
   { id: "filialen", label: "Filialen", icon: "🏪", color: "#4DA8A0" },
   { id: "mitarbeiter", label: "Mitarbeiter", icon: "👤", color: "#E8A33D" },
   { id: "hotels", label: "Hotels", icon: "🏨", color: "#6FA8DC" },
+  { id: "skischulen", label: "Skischulen", icon: "⛷️", color: "#E07A9B" },
   { id: "lieferanten", label: "Lieferanten", icon: "🚚", color: "#B48EDB" },
 ];
 const telHref = (p) => "tel:" + String(p || "").replace(/[^\d+]/g, "");
@@ -445,7 +446,7 @@ function ContactModal({ S, act, contact, initCat, onClose }) {
         <Select value={f.category} onChange={set("category")}>{CONTACT_CATS.map((c) => <option key={c.id} value={c.id}>{c.icon} {c.label}</option>)}</Select>
       </Field>
       <Field label="Name">
-        <TextInput value={f.name} onChange={set("name")} list="contact-emps" placeholder={f.category === "hotels" ? "z. B. Hotel Edelweiss" : f.category === "lieferanten" ? "z. B. Wintersteiger Service" : f.category === "filialen" ? "z. B. Filiale Grünwaldkopf" : "Name"} />
+        <TextInput value={f.name} onChange={set("name")} list="contact-emps" placeholder={f.category === "hotels" ? "z. B. Hotel Edelweiss" : f.category === "lieferanten" ? "z. B. Wintersteiger Service" : f.category === "skischulen" ? "z. B. Skischule Krallinger" : f.category === "filialen" ? "z. B. Filiale Grünwaldkopf" : "Name"} />
         {f.category === "mitarbeiter" && <datalist id="contact-emps">{S.employees.filter((e) => e.active).map((e) => <option key={e.id} value={e.name} />)}</datalist>}
       </Field>
       {f.category !== "mitarbeiter" && <Field label="Ansprechpartner (optional)"><TextInput value={f.person} onChange={set("person")} /></Field>}
