@@ -891,8 +891,10 @@ app.post("/api/shifts/cell", requireAdmin, (req, res) => {
   if (!isDate(b.date)) return res.status(400).json({ error: "Datum ungültig." });
   const loc = b.location ? (LOCS().includes(b.location) ? b.location : undefined) : null;
   if (loc === undefined) return res.status(400).json({ error: "Standort unbekannt." });
-  const d = data.settings.dienst;
+  const d = data.settings.dienst || DEFAULT_DIENST;
   const existing = data.shifts.find((s) => s.employeeId === b.employeeId && s.date === b.date);
+  // Admin wählt Filiale/Frei für einen Tag → evtl. eingetragene Abwesenheit an diesem Tag entfällt
+  clearAbsenceDay(b.employeeId, b.date);
   setDienst(b.employeeId, b.date, loc, existing && loc ? existing.start : d.start, existing && loc ? existing.end : d.end);
   persist();
   res.json({ ok: true });
@@ -919,7 +921,7 @@ app.post("/api/shifts/reassign", requireAdmin, (req, res) => {
 // Dienstplan aus Excel übernehmen
 app.post("/api/shifts/import", requireAdmin, (req, res) => {
   const rows = Array.isArray((req.body || {}).rows) ? req.body.rows.slice(0, 100) : [];
-  const d = data.settings.dienst;
+  const d = data.settings.dienst || DEFAULT_DIENST;
   let changed = 0, newEmps = 0;
   const touched = new Set();
   for (const r of rows) {
@@ -1514,10 +1516,58 @@ app.post("/api/absences", requireUser, (req, res) => {
   }
 });
 
+// Einen Tag aus allen Abwesenheiten eines Mitarbeiters herausnehmen (Zeiträume werden ggf. geteilt)
+function clearAbsenceDay(empId, date) {
+  const out = []; let changed = false;
+  for (const a of data.absences) {
+    if (a.employeeId !== empId || a.from > date || a.to < date) { out.push(a); continue; }
+    changed = true;
+    if (a.from < date) out.push({ ...a, to: addDaysISO(date, -1) });
+    if (a.to > date) out.push({ ...a, id: a.from < date ? uid() : a.id, from: addDaysISO(date, 1) });
+  }
+  data.absences = out;
+  return changed;
+}
+// Admin: Abwesenheit für genau einen Tag setzen (z. B. Urlaub → Krank) oder entfernen (type = null)
+app.post("/api/absences/day", requireAdmin, (req, res) => {
+  const b = req.body || {};
+  if (!data.employees.some((e) => e.id === b.employeeId)) return res.status(400).json({ error: "Mitarbeiter fehlt." });
+  if (!isDate(b.date)) return res.status(400).json({ error: "Datum ungültig." });
+  const type = b.type ? (ABS_TYPES.includes(b.type) ? b.type : undefined) : null;
+  if (type === undefined) return res.status(400).json({ error: "Art ungültig." });
+  clearAbsenceDay(b.employeeId, b.date);
+  if (type) {
+    setDienst(b.employeeId, b.date, null);
+    const ok = (a) => a.employeeId === b.employeeId && a.type === type && a.status === "genehmigt";
+    const before = data.absences.find((a) => ok(a) && a.to === addDaysISO(b.date, -1));
+    const after = data.absences.find((a) => ok(a) && a.from === addDaysISO(b.date, 1));
+    if (before && after) { before.to = after.to; data.absences = data.absences.filter((a) => a !== after); }
+    else if (before) before.to = b.date;
+    else if (after) after.from = b.date;
+    else data.absences.push({ id: uid(), employeeId: b.employeeId, type, from: b.date, to: b.date, note: "", createdAt: Date.now(), status: "genehmigt", decidedBy: req.admin.name });
+  }
+  persist();
+  res.json({ ok: true });
+});
+
 app.patch("/api/absences/:id", requireAdmin, (req, res) => {
   const a = data.absences.find((x) => x.id === req.params.id);
   if (!a) return res.status(404).json({ error: "Nicht gefunden." });
-  const st = (req.body || {}).status;
+  const b = req.body || {};
+  // Eintrag bearbeiten (Art, Zeitraum, Mitarbeiter, Notiz) – z. B. bei Vertippern
+  if (b.type !== undefined || b.from !== undefined || b.to !== undefined || b.employeeId !== undefined || b.note !== undefined) {
+    const type = b.type === undefined ? a.type : b.type;
+    const from = b.from === undefined ? a.from : b.from;
+    const to = b.to === undefined ? a.to : (b.to || from);
+    const employeeId = b.employeeId === undefined ? a.employeeId : b.employeeId;
+    if (!ABS_TYPES.includes(type)) return res.status(400).json({ error: "Art ungültig." });
+    if (!isDate(from) || !isDate(to)) return res.status(400).json({ error: "Zeitraum angeben." });
+    if (to < from) return res.status(400).json({ error: "Ende muss nach dem Beginn liegen." });
+    if (!data.employees.some((e) => e.id === employeeId)) return res.status(400).json({ error: "Mitarbeiter fehlt." });
+    Object.assign(a, { type, from, to, employeeId, note: b.note === undefined ? a.note : str(b.note, 300) });
+    if (b.status === undefined) { a.decidedBy = req.admin.name; a.decidedAt = Date.now(); persist(); return res.json(a); }
+  }
+  const st = b.status;
   if (!["offen", "genehmigt", "abgelehnt"].includes(st)) return res.status(400).json({ error: "Status ungültig." });
   a.status = st; a.decidedBy = req.admin.name; a.decidedAt = Date.now();
   persist();
