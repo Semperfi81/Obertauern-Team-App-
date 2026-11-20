@@ -293,6 +293,8 @@ const HELP = [
   ],
   "admin": [
    "Auf ein Feld tippen, um den Standort oder Frei zu setzen.",
+   "Im Dienstplan ein Feld antippen: Filiale, Frei oder Urlaub/Krank/Sonstiges für genau diesen Tag wählen – so lassen sich Vertipper und Krankheit im Urlaub schnell korrigieren.",
+   "Ganzen Zeitraum ändern oder löschen: unter „🗂 Eingetragene Abwesenheiten“ auf den Eintrag tippen.",
    "Auf einen Namen tippen, um ihn zu ändern oder die Filiale zu wechseln.",
    "Mit „📥 Aus Excel“ übernimmst du einen Dienstplan aus Excel."
   ]
@@ -1352,6 +1354,12 @@ function DienstplanGrid({ S, me, isAdmin, act, days, activeEmployees }) {
   };
   const [pick, setPick] = useState(null); // {emp, date} – Farbauswahl für ein Feld
   const [nameEdit, setNameEdit] = useState(null); // Mitarbeiter umbenennen / Filiale wechseln
+  const [absEdit, setAbsEdit] = useState(null); // ganzen Abwesenheits-Zeitraum bearbeiten
+  async function setAbsDay(empId, d, type) {
+    setPick(null); setBusy(empId + d);
+    try { await act("/absences/day", { method: "POST", body: { employeeId: empId, date: d, type } }); } catch (e) {}
+    setBusy("");
+  }
   function tap(emp, d) { if (isAdmin && !busy) setPick({ emp, date: d }); }
   async function setCell(empId, d, loc) {
     setPick(null); setBusy(empId + d);
@@ -1452,9 +1460,35 @@ function DienstplanGrid({ S, me, isAdmin, act, days, activeEmployees }) {
             ); })}
             <button onClick={() => setCell(pick.emp.id, pick.date, null)} className="rounded-xl py-4 font-semibold text-sm" style={{ background: FREI_COLOR.bg, color: FREI_COLOR.fg }}>Frei<div className="text-[10px] font-normal opacity-80">–</div></button>
           </div>
+          {(() => {
+            const cur = cellOf(pick.emp.id, pick.date).abs;
+            return (
+              <>
+                <p className="text-[11px] mt-3 mb-1.5" style={{ color: COLORS.textDim }}>Abwesend an diesem Tag:</p>
+                <div className="grid grid-cols-3 gap-2">
+                  {["urlaub", "krank", "sonstiges"].map((t) => {
+                    const on = cur && cur.type === t;
+                    return (
+                      <button key={t} onClick={() => setAbsDay(pick.emp.id, pick.date, on ? null : t)} className="rounded-xl py-2.5 text-xs font-semibold"
+                        style={{ background: on ? ABS[t].color : ABS[t].color + "26", color: on ? "#fff" : ABS[t].color, border: `1px solid ${ABS[t].color}` }}>
+                        {ABS[t].icon} {ABS[t].label}{on ? " ✓" : ""}
+                      </button>
+                    );
+                  })}
+                </div>
+                {cur && (
+                  <div className="mt-2 px-2.5 py-2 rounded-lg text-xs flex items-center justify-between gap-2" style={{ background: COLORS.bg }}>
+                    <span>{ABS[cur.type].icon} <span>{ABS[cur.type].label}</span> {fmtRange(cur)}{cur.status === "offen" ? " (beantragt)" : ""}</span>
+                    <button onClick={() => { setAbsEdit(cur); setPick(null); }} className="underline" style={{ color: COLORS.accent2 }}>✎ Zeitraum bearbeiten</button>
+                  </div>
+                )}
+              </>
+            );
+          })()}
           <Btn kind="ghost" onClick={() => setPick(null)} className="w-full mt-3">Abbrechen</Btn>
         </Modal>
       )}
+      {absEdit && <AbsenceModal S={S} isAdmin={isAdmin} act={act} edit={absEdit} onClose={() => setAbsEdit(null)} />}
       {nameEdit && <DienstNameModal S={S} emp={nameEdit} act={act} groupLoc={homeOf(S, nameEdit, days)} onClose={() => setNameEdit(null)} />}
       <div className="flex flex-wrap gap-2 text-[11px]">
         {L.map((l) => { const c = dienstColor(S, l); return <span key={l} className="px-2 py-0.5 rounded" style={{ background: c.bg, color: c.fg }}><span translate="no">{shortLoc(l)}</span> = {l}</span>; })}
@@ -1706,10 +1740,10 @@ function SchichtTab({ S, me, isAdmin, act, activeEmployees }) {
               </div>
               <div className="space-y-1.5">
                 {absList.map((a) => (
-                  <div key={a.id} className="px-2.5 py-1 rounded-lg text-xs flex justify-between gap-2" style={{ background: ABS[a.type].color + "1f", color: ABS[a.type].color }}>
+                  <button key={a.id} onClick={() => isAdmin && setAbsModal({ edit: a })} className="w-full text-left px-2.5 py-1 rounded-lg text-xs flex justify-between gap-2" style={{ background: ABS[a.type].color + "1f", color: ABS[a.type].color, cursor: isAdmin ? "pointer" : "default" }}>
                     <span>{ABS[a.type].icon} {empName(a.employeeId)}</span>
-                    <span>{ABS[a.type].label}{a.status === "offen" ? " (beantragt)" : ""}</span>
-                  </div>
+                    <span>{ABS[a.type].label}{a.status === "offen" ? " (beantragt)" : ""}{isAdmin ? " ✎" : ""}</span>
+                  </button>
                 ))}
                 {list.length === 0 && absList.length === 0 && <p className="text-xs" style={{ color: COLORS.textDim }}>–</p>}
                 {list.map((s) => (
@@ -1739,7 +1773,7 @@ function SchichtTab({ S, me, isAdmin, act, activeEmployees }) {
       )}
 
       {edit && <ShiftModal S={S} act={act} init={edit} onClose={() => setEdit(null)} activeEmployees={activeEmployees} />}
-      {absModal && <AbsenceModal S={S} isAdmin={isAdmin} act={act} initType={absModal.type} onClose={() => setAbsModal(null)} />}
+      {absModal && <AbsenceModal S={S} isAdmin={isAdmin} act={act} initType={absModal.type} edit={absModal.edit} onClose={() => setAbsModal(null)} />}
     </div>
   );
 }
@@ -1762,22 +1796,31 @@ function absDaysInMonth(S, empId, ym, type) {
 }
 function fmtRange(a) { return a.from === a.to ? fmtDateShort(a.from) : `${fmtDateShort(a.from)} – ${fmtDateShort(a.to)}`; }
 
-function AbsenceModal({ S, isAdmin, act, onClose, initType }) {
-  const [f, setF] = useState({ type: initType || "urlaub", from: todayISO(), to: todayISO(), note: "", employeeId: isAdmin ? ((S.employees.find((e) => e.active) || {}).id || "") : "" });
+function AbsenceModal({ S, isAdmin, act, onClose, initType, edit }) {
+  const [f, setF] = useState(edit
+    ? { type: edit.type, from: edit.from, to: edit.to, note: edit.note || "", employeeId: edit.employeeId }
+    : { type: initType || "urlaub", from: todayISO(), to: todayISO(), note: "", employeeId: isAdmin ? ((S.employees.find((e) => e.active) || {}).id || "") : "" });
   const [err, setErr] = useState("");
   const set = (k) => (v) => setF((p) => ({ ...p, [k]: v && v.target ? v.target.value : v }));
   async function save() {
     setErr("");
     if (f.to < f.from) { setErr("Ende muss nach dem Beginn liegen."); return; }
-    try { await api("/absences", { method: "POST", token: store.get(TOKEN_KEY), body: f }); await act("/state").catch(() => {}); onClose(); }
-    catch (e) { setErr(e.message); }
+    try {
+      if (edit) await act("/absences/" + edit.id, { method: "PATCH", body: f });
+      else { await api("/absences", { method: "POST", token: store.get(TOKEN_KEY), body: f }); await act("/state").catch(() => {}); }
+      onClose();
+    } catch (e) { setErr(e.message); }
   }
-  const title = isAdmin ? "Abwesenheit eintragen" : f.type === "krank" ? "🤒 Krank melden" : f.type === "urlaub" ? "🏖 Urlaub beantragen" : "📌 Abwesenheit melden";
+  async function del() {
+    if (!confirm("Diesen Eintrag löschen?")) return;
+    try { await act("/absences/" + edit.id, { method: "DELETE" }); onClose(); } catch (e) { setErr(e.message); }
+  }
+  const title = edit ? "✎ Abwesenheit bearbeiten" : isAdmin ? "Abwesenheit eintragen" : f.type === "krank" ? "🤒 Krank melden" : f.type === "urlaub" ? "🏖 Urlaub beantragen" : "📌 Abwesenheit melden";
   return (
     <Modal onClose={onClose}>
       <h3 className="text-sm font-medium mb-3">{title}</h3>
       {isAdmin && (
-        <Field label="Mitarbeiter"><Select value={f.employeeId} onChange={set("employeeId")}>{S.employees.filter((e) => e.active).map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}</Select></Field>
+        <Field label="Mitarbeiter"><Select value={f.employeeId} onChange={set("employeeId")}>{S.employees.filter((e) => e.active || e.id === f.employeeId).map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}</Select></Field>
       )}
       {f.type === "krank" && (
         <div className="mb-3 px-3 py-2.5 rounded-lg text-sm font-semibold" style={{ background: COLORS.danger + "22", border: `1px solid ${COLORS.danger}`, color: COLORS.danger }}>
@@ -1795,7 +1838,8 @@ function AbsenceModal({ S, isAdmin, act, onClose, initType }) {
       {!isAdmin && <p className="text-[11px] mb-3" style={{ color: COLORS.textDim }}>{f.type === "krank" ? "Die Krankmeldung gilt sofort, die Admins werden benachrichtigt. Kollegen sehen nur „abwesend“." : "Der Antrag geht an die Admins zur Freigabe. Du bekommst Bescheid, sobald er bearbeitet wurde."}</p>}
       {err && <p className="text-xs mb-2" style={{ color: COLORS.danger }}>{err}</p>}
       <div className="flex gap-2">
-        <Btn onClick={save} className="flex-1">{isAdmin ? "Eintragen" : f.type === "urlaub" ? "Beantragen" : "Melden"}</Btn>
+        <Btn onClick={save} className="flex-1">{edit ? "Speichern" : isAdmin ? "Eintragen" : f.type === "urlaub" ? "Beantragen" : "Melden"}</Btn>
+        {edit && <Btn kind="ghost" onClick={del}>🗑</Btn>}
         <Btn kind="ghost" onClick={onClose}>Abbrechen</Btn>
       </div>
     </Modal>
@@ -1807,6 +1851,8 @@ function AbsencePanel({ S, me, isAdmin, act, setModal }) {
   const all = S.absences || [];
   const pending = all.filter((a) => a.status === "offen").sort((a, b) => a.from.localeCompare(b.from));
   const mine = all.filter((a) => a.employeeId === me && a.to >= addDays(todayISO(), -30)).sort((a, b) => b.from.localeCompare(a.from));
+  const [showAll, setShowAll] = useState(false);
+  const current = all.filter((a) => a.status === "genehmigt" && a.to >= addDays(todayISO(), -14)).sort((a, b) => a.from.localeCompare(b.from));
   async function decide(a, status) { await act("/absences/" + a.id, { method: "PATCH", body: { status } }).catch(() => {}); }
   async function remove(a) { if (confirm("Eintrag löschen / Antrag zurückziehen?")) await act("/absences/" + a.id, { method: "DELETE" }).catch(() => {}); }
   return (
@@ -1835,6 +1881,23 @@ function AbsencePanel({ S, me, isAdmin, act, setModal }) {
               </div>
             ))}
           </div>
+        </Panel>
+      )}
+      {isAdmin && current.length > 0 && (
+        <Panel>
+          <button onClick={() => setShowAll(!showAll)} className="w-full flex items-center justify-between text-sm font-medium">
+            <span><span>🗂 Eingetragene Abwesenheiten</span> ({current.length})</span><span style={{ color: COLORS.textDim }}>{showAll ? "▲" : "▼"}</span>
+          </button>
+          {showAll && (
+            <div className="space-y-1.5 mt-2">
+              {current.map((a) => (
+                <button key={a.id} onClick={() => setModal({ edit: a })} className="w-full flex items-center justify-between gap-2 text-xs px-2.5 py-2 rounded-lg text-left" style={{ background: COLORS.bg }}>
+                  <span><span style={{ color: (ABS[a.type] || ABS.abwesend).color }}>{(ABS[a.type] || ABS.abwesend).icon} {(ABS[a.type] || ABS.abwesend).label}</span> · <b translate="no">{name(a.employeeId)}</b> · {fmtRange(a)}</span>
+                  <span style={{ color: COLORS.textDim }}>✎</span>
+                </button>
+              ))}
+            </div>
+          )}
         </Panel>
       )}
       {!isAdmin && mine.length > 0 && (
