@@ -1783,7 +1783,7 @@ function SchichtTab({ S, me, isAdmin, act, activeEmployees }) {
 // =====================================================================
 const ABS = {
   urlaub: { icon: "🏖", label: "Urlaub", color: "#6FA8DC" },
-  krank: { icon: "🤒", label: "Krank", color: "#8E44AD" },
+  krank: { icon: "🤒", label: "Krank", color: "#9B59D0" },
   sonstiges: { icon: "📌", label: "Abwesend", color: "#B48EDB" },
   abwesend: { icon: "🚫", label: "Abwesend", color: "#8C919E" },
 };
@@ -1823,7 +1823,7 @@ function AbsenceModal({ S, isAdmin, act, onClose, initType, edit }) {
         <Field label="Mitarbeiter"><Select value={f.employeeId} onChange={set("employeeId")}>{S.employees.filter((e) => e.active || e.id === f.employeeId).map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}</Select></Field>
       )}
       {f.type === "krank" && (
-        <div className="mb-3 px-3 py-2.5 rounded-lg text-sm font-semibold" style={{ background: COLORS.danger + "22", border: `1px solid ${COLORS.danger}`, color: COLORS.danger }}>
+        <div className="mb-3 px-3 py-2.5 rounded-lg text-sm font-semibold" style={{ background: ABS.krank.color + "33", border: `1px solid ${ABS.krank.color}`, color: "#C9A0E8" }}>
           ⚠️ Krankmeldung erforderlich
         </div>
       )}
